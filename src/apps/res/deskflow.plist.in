@@ -32,6 +32,7 @@
 	<string>@BUNDLE_COPYRIGHT@</string>
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.utilities</string>
+	@BUNDLE_MINIMUM_SYSTEM_VERSION@
 
 	<!-- Prevent macOS from terminating during memory pressure -->
 	<key>NSSupportsAutomaticTermination</key>

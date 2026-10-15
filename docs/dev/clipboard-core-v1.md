@@ -1,9 +1,9 @@
 # 内嵌剪贴板首版：构建、使用与协议
 
-更新：2026-10-15。基线：`macos` 集成提交 `0736934e6`，Ubuntu 分支继续修复与验证。
+更新：2026-10-15。`macos` 已合入 Ubuntu 最新 `6a657c5e3`，并补齐 Mac 初始化、旧剪贴板交接及 App 打包。
 
 这是直接内嵌 Deskflow core/GUI 的实验首版，不需要独立 SSH 工具或手动启动服务。
-Mac 组的集成提交只完成编译。本轮 Ubuntu 已增加本地 TLS/runtime、真实 core 会话和原生
+Mac 组已生成 Release 试用分发包，仅做编译、依赖和签名检查。本轮 Ubuntu 已增加本地 TLS/runtime、真实 core 会话和原生
 GNOME 测试，实际结果见 [Ubuntu 进度](clipboard-progress.md#ubuntu-core-v1-落地记录)。
 **尚无 Mac↔Ubuntu 实机验收结果**；本地两个进程不计作跨机器通过。
 
@@ -38,7 +38,9 @@ Mac 另需现有 Qt/OpenSSL 构建参数与 macFUSE FUSE3 SDK；本机编译产�
 Ubuntu 需原工程依赖及 FUSE3、X11、XFixes 开发包。功能默认不编译、不启用；未编译时 GUI 开关不可选。
 CMake 会将两个内部 helper 安装到 core 同一目录；Mac bundle 构建也会把它们放入 `Contents/MacOS`。
 helper 仍使用原型名称以复用已有实现，但由 core 自动管理，不是用户需要启动的独立产品。
-本轮未生成、签名或公证可分发安装包。
+Mac 分发构建和安装说明见 [Release 记录](clipboard-tests/2026-10-15-macos-release.md)。
+本次产物为 Apple Silicon / macOS 27+，Qt/OpenSSL 随 App 打包，macFUSE 仍需单独安装。
+使用 ad-hoc 签名，未进行 Developer ID 签名或 Apple 公证。
 
 ## 使用
 
@@ -169,7 +171,11 @@ GNOME 的 Wayland 代理可能拒绝 `TIMESTAMP` 转换。Ubuntu runtime 使用 
 在一条持续订阅 XFixes 的连接上采集 TARGETS 和所有表示；过程中 owner 或同窗口 generation 改变，
 整次采集失败，不拼接不同复制操作的数据。独立读进程的显式时间戳校验仍保持严格。
 Ubuntu 客户端启动时只记录既有 owner，初始选择由 server 公告；后续本地复制正常参与排序。
-Linux 的 Ready 在后端监听初始化完成后报告，避免用户在监听尚未启动时开始复制。
+Mac 客户端同样使用 `watch --skip-initial`，只记录现有 changeCount，不把旧内容当作新复制。
+两端在后端监听初始化后才报告 Ready；共同 runtime 在收到 `watch_initialized` 前暂停
+处理握手之后的数据帧，使用原有有界缓冲，15 秒未初始化则退出文件通道并恢复旧剪贴板。
+这避免远端内容早于本地发布保护基线到达时被误拒绝。Ubuntu 组应同步本轮公共 runtime 修复；线协议仍是 1.9/profile 1。
+Mac 旧剪贴板读、写、变化检查持有与 runtime 激活相同的互斥门控，完成整次操作后才交接。
 
 内部 stdout 管道用 JSONL/base64 提交一次小格式采集，总原始正文不超过 16 MiB，接收缓冲上限
 32 MiB；该模式禁止 `--log`，不把正文写进诊断日志。文件公告只提交路径引用，不读取文件主体。

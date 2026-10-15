@@ -21,6 +21,7 @@ struct MacClipboardOptions
   std::optional<long long> expectedChangeCount;
   int durationMs = 0;
   int pollMs = 100;
+  bool skipInitial = false;
 };
 
 struct MacClipboardRepresentation

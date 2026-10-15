@@ -16,6 +16,7 @@
 #include "base/Log.h"
 #include "base/TMethodJob.h"
 #include "client/Client.h"
+#include "clipboard/CoreClipboard.h"
 #include "common/ExitCodes.h"
 #include "common/Settings.h"
 #include "deskflow/ClientApp.h"
@@ -230,6 +231,9 @@ void *OSXComputer::getEventTarget() const
 
 bool OSXComputer::getClipboard(ClipboardID, IClipboard *dst) const
 {
+  const deskflow::clipboard::LegacyClipboardGuard guard;
+  if (!guard)
+    return false;
   Clipboard::copy(dst, &m_pasteboard);
   return true;
 }
@@ -835,6 +839,9 @@ void OSXComputer::leave()
 
 bool OSXComputer::setClipboard(ClipboardID, const IClipboard *src)
 {
+  const deskflow::clipboard::LegacyClipboardGuard guard;
+  if (!guard)
+    return false;
   if (src != nullptr) {
     LOG_DEBUG("setting clipboard");
     Clipboard::copy(&m_pasteboard, src);
@@ -844,6 +851,9 @@ bool OSXComputer::setClipboard(ClipboardID, const IClipboard *src)
 
 void OSXComputer::checkClipboards()
 {
+  const deskflow::clipboard::LegacyClipboardGuard guard;
+  if (!guard)
+    return;
   LOG_VERBOSE("checking clipboard");
   if (m_pasteboard.synchronize()) {
     LOG_DEBUG("clipboard changed");

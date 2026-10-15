@@ -20,7 +20,7 @@ private:
 };
 #ifdef DESKFLOW_CLIPBOARD_FILES
 bool coreClipboardActive();
-// Serialize Portal reads/claims with the handoff to and from the new backend.
+// Serialize native legacy reads/claims with the handoff to and from the new backend.
 // Keep the guard alive for the complete legacy operation, including cache updates.
 class LegacyClipboardGuard
 {

@@ -1,0 +1,47 @@
+# SPDX-FileCopyrightText: (C) 2026 Deskflow Developers
+# SPDX-License-Identifier: MIT
+
+set(bundle "$ENV{DESTDIR}${CMAKE_INSTALL_PREFIX}/@CMAKE_PROJECT_PROPER_NAME@.app")
+set(identity "@APPLE_CODESIGN_DEV@")
+set(sign_options)
+set(deploy_options)
+if(identity)
+  list(APPEND sign_options --options runtime --timestamp)
+  list(APPEND deploy_options -hardened-runtime -timestamp)
+else()
+  set(identity "-")
+endif()
+
+# The GUI's dependencies alone do not cover the core's OpenSSL dependencies.
+# macFUSE remains a separately installed system component: do not relocate its
+# library/framework or system extension into the application.
+execute_process(COMMAND "@DEPLOYQT@" "${bundle}"
+  "-executable=${bundle}/Contents/MacOS/deskflow-core"
+  "-codesign=${identity}" ${deploy_options}
+  OUTPUT_VARIABLE deploy_stdout ERROR_VARIABLE deploy_stderr
+  COMMAND_ERROR_IS_FATAL ANY)
+message(STATUS "${deploy_stdout}${deploy_stderr}")
+# macdeployqt can report unresolved libraries while returning exit status zero.
+if("${deploy_stdout}${deploy_stderr}" MATCHES "ERROR:")
+  message(FATAL_ERROR "macdeployqt reported a dependency deployment error")
+endif()
+
+if(@BUILD_CLIPBOARD_FILES@)
+  foreach(helper deskflow-clipboard-probe deskflow-file-prototype)
+    set(helper_options ${sign_options})
+    if(helper STREQUAL "deskflow-file-prototype" AND NOT identity STREQUAL "-")
+      # A Developer ID signed helper loads the independently signed macFUSE SDK.
+      list(APPEND helper_options --entitlements "@MY_DIR@/fuse-entitlements.plist")
+    endif()
+    execute_process(COMMAND /usr/bin/codesign --force --sign "${identity}"
+      ${helper_options} "${bundle}/Contents/MacOS/${helper}"
+      COMMAND_ERROR_IS_FATAL ANY)
+  endforeach()
+endif()
+
+# Seal the app after signing the embedded helpers. Fail installation rather than
+# producing a package with a missing dependency deployment or invalid signature.
+execute_process(COMMAND /usr/bin/codesign --force --sign "${identity}"
+  ${sign_options} "${bundle}" COMMAND_ERROR_IS_FATAL ANY)
+execute_process(COMMAND /usr/bin/codesign --verify --deep --strict "${bundle}"
+  COMMAND_ERROR_IS_FATAL ANY)

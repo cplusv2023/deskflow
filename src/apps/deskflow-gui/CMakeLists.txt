@@ -24,6 +24,11 @@ elseif(BUILD_OSX_BUNDLE)
   set(BUNDLE_ICON_FILE ${target}.icns)
   set(BUNDLE_INFO_STRING "${CMAKE_PROJECT_DESCRIPTION}")
   set(BUNDLE_COPYRIGHT "${CMAKE_PROJECT_COPYRIGHT}")
+  set(BUNDLE_MINIMUM_SYSTEM_VERSION "")
+  if(CMAKE_OSX_DEPLOYMENT_TARGET)
+    set(BUNDLE_MINIMUM_SYSTEM_VERSION
+      "<key>LSMinimumSystemVersion</key><string>${CMAKE_OSX_DEPLOYMENT_TARGET}</string>")
+  endif()
 
   configure_file(
     ${CMAKE_CURRENT_SOURCE_DIR}/../res/deskflow.plist.in
@@ -92,6 +97,12 @@ if(WIN32)
 
 elseif(APPLE)
   if (BUILD_OSX_BUNDLE)
+    # QtSvg can be installed separately from QtBase. An explicit dependency
+    # lets macdeployqt find it before deploying the SVG icon/image plugins.
+    find_package(Qt6Svg QUIET)
+    if(TARGET Qt6::Svg)
+      target_link_libraries(${target} Qt6::Svg)
+    endif()
     set_target_properties(${target} PROPERTIES
       INSTALL_RPATH "@loader_path/../Libraries;@loader_path/../Frameworks"
       MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_BINARY_DIR}/deskflow.plist"

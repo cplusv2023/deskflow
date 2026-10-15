@@ -30,6 +30,7 @@ void help()
                "  deskflow-clipboard-probe release --pasteboard NAME\n\n"
                "Options: --pasteboard NAME, --log JSONL, --origin TOKEN,\n"
                "         --duration-ms N (publish/watch), --poll-ms N (default 100).\n"
+               "         --skip-initial (watch): record the baseline without announcing it.\n"
                "Without --pasteboard, commands use the system clipboard. Tests should\n"
                "always use a unique name. release is only for named test pasteboards.\n"
                "publish writes native file URLs without opening or stat-ing the files.\n"
@@ -103,6 +104,8 @@ int run(int argc, char **argv)
       }
     } else if (!positional && argument == "--duration-ms" && (command == "watch" || command.starts_with("publish"))) {
       options.durationMs = positiveInteger(value(i, argc, argv));
+    } else if (!positional && argument == "--skip-initial" && command == "watch") {
+      options.skipInitial = true;
     } else if (!positional && argument == "--poll-ms") {
       options.pollMs = positiveInteger(value(i, argc, argv));
       if (options.pollMs > 1000) {

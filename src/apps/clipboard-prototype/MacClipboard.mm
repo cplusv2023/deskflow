@@ -688,6 +688,7 @@ int watchMacClipboard(const MacClipboardOptions &options)
     NSPasteboard *board = pasteboard(options);
     SignalGuard signals;
     std::string previous;
+    bool initialized = false;
     const auto start = std::chrono::steady_clock::now();
     while (!g_stop) {
       @autoreleasepool {
@@ -699,7 +700,14 @@ int watchMacClipboard(const MacClipboardOptions &options)
           auto fingerprint = json(record);
           if (fingerprint != previous) {
             previous = std::move(fingerprint);
-            logger.write([record[@"selfOrigin"] boolValue] ? @"selfChange" : @"clipboardChanged", record);
+            if (!initialized && options.skipInitial)
+              logger.write(@"owner_changed", record);
+            else
+              logger.write([record[@"selfOrigin"] boolValue] ? @"selfChange" : @"clipboardChanged", record);
+          }
+          if (!initialized) {
+            initialized = true;
+            logger.write(@"watch_initialized", record);
           }
         }
         if (options.durationMs > 0 &&

@@ -348,18 +348,7 @@ private:
            {}}
       );
     });
-    connect(m_socket, &QSslSocket::readyRead, this, [this] {
-      try {
-        while (!m_stopped && m_socket && m_socket->bytesAvailable()) {
-          m_input += m_socket->read(frameLimit + 4 - m_input.size());
-          RpcMessage msg;
-          while (!m_stopped && takeMessage(m_input, msg))
-            handle(std::move(msg));
-        }
-      } catch (const std::exception &e) {
-        networkFailure("invalid peer message: " + QString::fromUtf8(e.what()));
-      }
-    });
+    connect(m_socket, &QSslSocket::readyRead, this, [this] { drainInput(); });
     connect(m_socket, &QSslSocket::disconnected, this, [this] { networkFailure("data connection closed"); });
     connect(m_socket, &QSslSocket::errorOccurred, this, [this](QAbstractSocket::SocketError) {
       networkFailure("TLS connection failed");
@@ -371,6 +360,25 @@ private:
         return;
       }
       m_socket->startServerEncryption();
+    }
+  }
+  void drainInput()
+  {
+    try {
+      // After the TLS handshake, wait for a native baseline before processing
+      // selections. Keep data in the bounded socket/frame buffers meanwhile.
+      while (!m_stopped && m_socket && (!m_enabled || m_nativeReady)) {
+        RpcMessage msg;
+        if (takeMessage(m_input, msg)) {
+          handle(std::move(msg));
+        } else if (m_socket->bytesAvailable()) {
+          m_input += m_socket->read(frameLimit + 4 - m_input.size());
+        } else {
+          break;
+        }
+      }
+    } catch (const std::exception &e) {
+      networkFailure("invalid peer message: " + QString::fromUtf8(e.what()));
     }
   }
   void handle(RpcMessage msg)
@@ -397,9 +405,7 @@ private:
         throw std::runtime_error("expected ready");
       m_enabled = true;
       setActive(true);
-#ifdef Q_OS_MACOS
-      status("Ready: " + backendName() + "; detectable files, text, HTML, PNG");
-#endif
+      m_deadline = now() + 15000;
       startWatcher();
       return;
     }
@@ -558,9 +564,9 @@ private:
     QStringList args{"watch", "--origin", origin};
 #ifndef Q_OS_MACOS
     args << "--capture" << "--timeout-ms" << "10000";
+#endif
     if (!m_server)
       args << "--skip-initial";
-#endif
     m_watcher = process("deskflow-clipboard-probe", args);
     connect(m_watcher, &QProcess::readyReadStandardOutput, this, [this] {
       m_watchInput += m_watcher->readAllStandardOutput();
@@ -576,6 +582,7 @@ private:
         m_watchInput.remove(0, pos + 1);
         const auto event = object.value("event").toString();
         if (event == "watch_initialized") {
+          m_nativeReady = true;
           status("Ready: " + backendName() + "; detectable files, text, HTML, PNG");
           continue;
         }
@@ -597,6 +604,8 @@ private:
         m_native = object;
         observed(object);
       }
+      if (m_nativeReady)
+        drainInput();
     });
     connect(m_watcher, &QProcess::finished, this, [this] {
       if (!m_stopped)
@@ -1037,6 +1046,10 @@ private:
       fail("capability or TLS binding timed out");
       return;
     }
+    if (m_enabled && !m_nativeReady && now() > m_deadline) {
+      fail("native clipboard initialization timed out");
+      return;
+    }
     if (m_outDeadline && now() > m_outDeadline) {
       m_outgoing.clear();
       m_outMime.clear();
@@ -1051,7 +1064,7 @@ private:
     m_source->collectExpired();
   }
   ClipboardBinding m_binding;
-  bool m_server, m_bound = false, m_enabled = false, m_stopped = false, m_emptySent = false;
+  bool m_server, m_bound = false, m_enabled = false, m_nativeReady = false, m_stopped = false, m_emptySent = false;
   QString m_certificate;
   QTemporaryDir m_dir;
   std::unique_ptr<LocalFileSource> m_source;
