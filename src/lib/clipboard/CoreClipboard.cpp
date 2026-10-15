@@ -871,6 +871,66 @@ private:
     };
 #endif
   }
+  void acceptPublication(QProcess *publisher, uint64_t token)
+  {
+    if (m_pendingPublisher != publisher || !remoteSelected(token))
+      return;
+    if (m_publisher && m_publisher != publisher)
+      m_publisher->terminate();
+    m_publisher = publisher;
+    m_pendingPublisher = nullptr;
+    status("Remote clipboard available for paste");
+  }
+#ifdef Q_OS_MACOS
+  void verifyFilePublication(QProcess *publisher, uint64_t token, qint64 changeCount, qsizetype itemCount)
+  {
+    // A fresh process sees pboard's accepted types, not the writer's local
+    // cache. macOS can reject public.file-url while retaining the origin type.
+    auto *reader = process("deskflow-clipboard-probe", {"inspect", "--origin", origin});
+    const QPointer<QProcess> owner(publisher);
+    connect(
+        reader, &QProcess::finished, this,
+        [this, reader, owner, token, changeCount, itemCount](int code, QProcess::ExitStatus exitStatus) {
+          const auto record = QJsonDocument::fromJson(reader->readAllStandardOutput()).object();
+          reader->deleteLater();
+          if (!owner || m_pendingPublisher != owner || !remoteSelected(token))
+            return;
+          const auto items = record.value("items").toArray();
+          bool valid = code == 0 && exitStatus == QProcess::NormalExit && record.value("stable").toBool() &&
+                       record.value("changeCount").toInteger(-1) == changeCount &&
+                       record.value("origin").toString() == origin && items.size() == itemCount && itemCount > 0;
+          for (const auto &item : items)
+            valid = valid && item.toObject().value("types").toArray().contains(QStringLiteral("public.file-url"));
+          if (valid) {
+            acceptPublication(owner, token);
+          } else {
+            m_pendingPublisher = nullptr;
+            owner->terminate();
+            status(
+                "File clipboard publication not visible to Finder (macOS file access rejected or clipboard changed); "
+                "copy again"
+            );
+          }
+        }
+    );
+    connect(reader, &QProcess::errorOccurred, this, [this, reader, owner, token](QProcess::ProcessError error) {
+      if (error != QProcess::FailedToStart)
+        return;
+      reader->deleteLater();
+      if (owner && m_pendingPublisher == owner && remoteSelected(token)) {
+        m_pendingPublisher = nullptr;
+        owner->terminate();
+        status("Unable to verify macOS file clipboard publication");
+      }
+    });
+    QTimer::singleShot(3000, reader, [reader] {
+      if (reader->state() != QProcess::NotRunning)
+        reader->kill();
+    });
+    // Let the publisher service its run loop before asking another process.
+    QTimer::singleShot(100, reader, [reader] { reader->start(); });
+  }
+#endif
   void publish(QStringList args, uint64_t token, QStringList files = {})
   {
     if (!remoteSelected(token)) {
@@ -885,22 +945,61 @@ private:
       m_pendingPublisher->kill();
       m_pendingPublisher = nullptr;
     }
+#ifdef Q_OS_MACOS
+    const auto fileCount = args.value(0) == "publish" ? args.size() - 1 : 0;
+#endif
     args << "--origin" << origin;
     args << publicationGuard();
     auto *p = process("deskflow-clipboard-probe", args);
     m_pendingPublisher = p;
-    connect(p, &QProcess::readyReadStandardOutput, this, [this, p] {
-      const auto bytes = p->readAllStandardOutput();
-      if (bytes.contains("ready") || bytes.contains("published")) {
-        if (m_publisher && m_publisher != p)
-          m_publisher->terminate();
-        m_publisher = p;
-        if (m_pendingPublisher == p)
+    auto output = std::make_shared<QByteArray>();
+    connect(
+        p, &QProcess::readyReadStandardOutput, this,
+        [this, p, token, output
+#ifdef Q_OS_MACOS
+         ,
+         fileCount
+#endif
+    ] {
+          *output += p->readAllStandardOutput();
+          if (output->size() > 64 * 1024) {
+            p->kill();
+            return;
+          }
+          qsizetype end;
+          while ((end = output->indexOf('\n')) >= 0) {
+            const auto record = QJsonDocument::fromJson(output->left(end)).object();
+            output->remove(0, end + 1);
+            const auto event = record.value("event").toString();
+            if (event != "ready" && event != "published")
+              continue;
+            if (m_pendingPublisher != p || !remoteSelected(token))
+              continue;
+#ifdef Q_OS_MACOS
+            if (fileCount > 0) {
+              verifyFilePublication(p, token, record.value("changeCount").toInteger(-1), fileCount);
+              continue;
+            }
+#endif
+            acceptPublication(p, token);
+          }
+        }
+    );
+    connect(p, &QProcess::errorOccurred, this, [this, p, files](QProcess::ProcessError error) {
+      if (error == QProcess::FailedToStart) {
+        for (const auto &path : files) {
+          QFile::remove(path);
+          m_formatFiles.removeAll(path);
+        }
+        if (m_pendingPublisher == p) {
           m_pendingPublisher = nullptr;
-        status("Remote clipboard available for paste");
+          status("Clipboard publisher could not start");
+        }
+        p->deleteLater();
       }
     });
     connect(p, &QProcess::finished, this, [this, p, files](int code, QProcess::ExitStatus) {
+      const bool current = m_pendingPublisher == p || m_publisher == p;
       for (const auto &path : files) {
         QFile::remove(path);
         m_formatFiles.removeAll(path);
@@ -909,7 +1008,7 @@ private:
         m_pendingPublisher = nullptr;
       if (m_publisher == p)
         m_publisher = nullptr;
-      if (code && !m_stopped)
+      if (code && current && !m_stopped)
         status("Clipboard publication failed or a newer local copy won");
       p->deleteLater();
     });

@@ -30,7 +30,7 @@ struct MacClipboardRepresentation
   std::string inputPath;
 };
 
-// File publication transfers URL metadata only and never opens or stats the files.
+// File publication canonicalizes and checks file metadata, but never reads file bodies.
 int publishMacFiles(const std::vector<std::string> &paths, const MacClipboardOptions &options);
 // Pins bounded local representation inputs; reads their bytes on an AppKit request.
 // This prototype detects ordinary file changes; it does not claim immutable snapshots.

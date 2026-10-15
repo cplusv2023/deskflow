@@ -33,7 +33,7 @@ void help()
                "         --skip-initial (watch): record the baseline without announcing it.\n"
                "Without --pasteboard, commands use the system clipboard. Tests should\n"
                "always use a unique name. release is only for named test pasteboards.\n"
-               "publish writes native file URLs without opening or stat-ing the files.\n"
+               "publish checks mounted metadata and writes native file URLs without reading bodies.\n"
                "Keep the virtual filesystem mounted while the URLs can be pasted.\n"
                "publish-data provides text/plain, text/html, and image/png lazily, with\n"
                "a combined 16 MiB input limit. Inputs must be regular files. Keep the\n"

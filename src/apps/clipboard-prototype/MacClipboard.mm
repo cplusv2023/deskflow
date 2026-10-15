@@ -15,6 +15,7 @@
 #include <chrono>
 #include <cmath>
 #include <csignal>
+#include <cstdlib>
 #include <cstring>
 #include <fcntl.h>
 #include <fstream>
@@ -419,6 +420,34 @@ struct RepresentationSource
 using deskflow::clipboard::prototype::Logger;
 using deskflow::clipboard::prototype::RepresentationSource;
 
+// Preserve NSURL's native pasteboard representations and writing options while
+// adding our loop-prevention marker to the same item.
+@interface DeskflowFileURLWriter : NSObject <NSPasteboardWriting>
+@property(nonatomic, strong) NSURL *url;
+@property(nonatomic, copy) NSString *origin;
+@end
+
+@implementation DeskflowFileURLWriter
+- (NSArray<NSPasteboardType> *)writableTypesForPasteboard:(NSPasteboard *)board
+{
+  return [[self.url writableTypesForPasteboard:board] arrayByAddingObject:@"org.deskflow.clipboard.prototype.origin"];
+}
+- (id)pasteboardPropertyListForType:(NSPasteboardType)type
+{
+  if ([type isEqualToString:@"org.deskflow.clipboard.prototype.origin"])
+    return self.origin;
+  return [self.url pasteboardPropertyListForType:type];
+}
+- (NSPasteboardWritingOptions)writingOptionsForType:(NSPasteboardType)type pasteboard:(NSPasteboard *)board
+{
+  if ([type isEqualToString:@"org.deskflow.clipboard.prototype.origin"])
+    return 0;
+  return [self.url respondsToSelector:@selector(writingOptionsForType:pasteboard:)]
+             ? [self.url writingOptionsForType:type pasteboard:board]
+             : 0;
+}
+@end
+
 @interface DeskflowPrototypeDataProvider : NSObject <NSPasteboardItemDataProvider> {
   std::vector<RepresentationSource> _sources;
   std::shared_ptr<Logger> _logger;
@@ -493,24 +522,42 @@ int publishMacFiles(const std::vector<std::string> &paths, const MacClipboardOpt
       throw std::invalid_argument("publish requires 1 to 1024 absolute file paths");
     }
     NSString *origin = publisherOrigin(options);
-    NSMutableArray<NSPasteboardItem *> *items = [NSMutableArray arrayWithCapacity:paths.size()];
+    NSMutableArray<DeskflowFileURLWriter *> *items = [NSMutableArray arrayWithCapacity:paths.size()];
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
     std::size_t totalBytes = 0;
     for (const auto &path : paths) {
       NSString *native = nativeString(path);
       if (![native isAbsolutePath]) {
         throw std::invalid_argument("publish requires absolute paths");
       }
-      // Explicit isDirectory avoids the filesystem lookup of the convenience initializer.
-      NSURL *url = [NSURL fileURLWithPath:native isDirectory:[native hasSuffix:@"/"]];
+      // FUSE init can announce readiness before the mount is visible to other
+      // processes. Wait for metadata, then remove /var -> /private/var aliases
+      // before AppKit requests a sandbox extension for the file URL.
+      NSString *canonical = nil;
+      struct stat attributes{};
+      do {
+        char *resolved = ::realpath(native.fileSystemRepresentation, nullptr);
+        if (resolved) {
+          canonical = [NSFileManager.defaultManager stringWithFileSystemRepresentation:resolved
+                                                                                length:strlen(resolved)];
+          free(resolved);
+          if (::stat(canonical.fileSystemRepresentation, &attributes) == 0 &&
+              ::access(canonical.fileSystemRepresentation, R_OK) == 0)
+            break;
+          canonical = nil;
+        }
+        if (std::chrono::steady_clock::now() >= deadline)
+          throw std::runtime_error("FILE_URL_NOT_ACCESSIBLE: mounted file metadata is not ready or readable");
+        pump(50);
+      } while (true);
+      NSURL *url = [NSURL fileURLWithPath:canonical isDirectory:S_ISDIR(attributes.st_mode)];
       totalBytes += [url.absoluteString lengthOfBytesUsingEncoding:NSUTF8StringEncoding] + 2;
       if (totalBytes > kMaxFileListBytes) {
         throw std::invalid_argument("file URL metadata exceeds 64 KiB");
       }
-      NSPasteboardItem *item = [[NSPasteboardItem alloc] init];
-      if (![item setString:url.absoluteString forType:NSPasteboardTypeFileURL] || ![item setString:origin
-                                                                                           forType:kOriginType]) {
-        throw std::runtime_error("cannot prepare file URL and origin metadata");
-      }
+      DeskflowFileURLWriter *item = [[DeskflowFileURLWriter alloc] init];
+      item.url = url;
+      item.origin = origin;
       [items addObject:item];
     }
     Logger logger(options.logPath, std::cout);
@@ -518,9 +565,10 @@ int publishMacFiles(const std::vector<std::string> &paths, const MacClipboardOpt
     if (options.expectedChangeCount && board.changeCount != *options.expectedChangeCount)
       throw std::runtime_error("OWNER_CHANGED: newer local copy superseded publication");
     [board prepareForNewContentsWithOptions:NSPasteboardContentsCurrentHostOnly];
-    // Publish complete items in one write. Mixing writeObjects with legacy
-    // board-level addTypes/setString can replace the NSURL representations,
-    // leaving only the origin marker and disabling Finder's Paste command.
+    // Publish native URL representations and origin in one write. Do not append
+    // board-level types: doing so can replace the file representations.
+    // This process may see cached types even if pboard rejects them. Core must
+    // verify this publication from a separate reader before reporting success.
     if (![board writeObjects:items]) {
       throw std::runtime_error("AppKit rejected file URL publication");
     }
