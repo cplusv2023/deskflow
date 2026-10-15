@@ -12,6 +12,7 @@
 
 #include <Carbon/Carbon.h>
 
+#include <chrono>
 #include <map>
 #include <vector>
 
@@ -28,7 +29,11 @@ public:
 
   OSXKeyState(IEventQueue *events, std::vector<std::string> layouts, bool isLangSyncEnabled);
   OSXKeyState(IEventQueue *events, deskflow::KeyMap &keyMap, std::vector<std::string> layouts, bool isLangSyncEnabled);
-  ~OSXKeyState() override = default;
+  ~OSXKeyState() override;
+  void fakeKeyDown(KeyID id, KeyModifierMask mask, KeyButton button, const std::string &lang) override;
+  bool fakeKeyRepeat(KeyID id, KeyModifierMask mask, int32_t count, KeyButton button, const std::string &lang) override;
+  bool fakeKeyUp(KeyButton button) override;
+  void fakeAllKeysUp() override;
 
   //! @name modifiers
   //@{
@@ -126,6 +131,21 @@ private:
   static uint32_t mapKeyButtonToVirtualKey(KeyButton keyButton);
 
   void init();
+  void cancelCapsTimer();
+  void activateHeldCaps();
+  bool setNativeCapsLock(bool enabled);
+  bool selectCapsInputSource(bool asciiOnly);
+  bool nativeCapsLocked() const;
+  void normalizeCapsKey(KeyID &id, KeyModifierMask &mask);
+
+  IEventQueue *m_inputEvents;
+  EventQueueTimer *m_capsTimer = nullptr;
+  bool m_nativeCapsLock = false;
+  KeyButton m_capsButton = 0;
+  bool m_capsHeld = false;
+  bool m_capsWasLocked = false;
+  std::chrono::steady_clock::time_point m_capsPressedAt;
+  std::string m_lastNonAsciiInputSource;
 
   // Post a key event to HID manager. It posts an event to HID client, a
   // much lower level than window manager which's the target from carbon
@@ -166,7 +186,11 @@ private:
   // track whether the right-hand variant of a modifier is held so the
   // device-dependent event flags report the correct side.
   bool m_shiftRightPressed;
+  bool m_shiftLeftPressed = false;
   bool m_controlRightPressed;
+  bool m_controlLeftPressed = false;
   bool m_altRightPressed;
+  bool m_altLeftPressed = false;
   bool m_superRightPressed;
+  bool m_superLeftPressed = false;
 };

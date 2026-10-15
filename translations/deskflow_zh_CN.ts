@@ -185,6 +185,14 @@ p, li { white-space: pre-wrap; }
         <source>Use dynamic reconnection time based on connection attempts</source>
         <translation type="unfinished">根据连接尝试次数，采用动态重连时间</translation>
     </message>
+    <message>
+        <source>Mac Caps Lock: tap to switch input source, hold for uppercase</source>
+        <translation>Mac Caps Lock：短按切换输入法，长按开启大写</translation>
+    </message>
+    <message>
+        <source>Tap to switch between ASCII and the last non-ASCII input source on this Mac. Hold for 0.6 seconds to enable Caps Lock; tap again to disable it. Keeps the Mac input source independent of the server. Requires both input sources to be enabled on the Mac.</source>
+        <translation>短按在 Mac 的英文输入源与最近使用的非英文输入法之间切换。长按 0.6 秒开启大写锁定，再按关闭。Mac 输入法独立于服务器，需先在 Mac 启用两类输入源。</translation>
+    </message>
 </context>
 <context>
     <name>ComputerSettingsDialog</name>

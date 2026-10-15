@@ -7,12 +7,16 @@
 
 #include "platform/OSXKeyState.h"
 #include "arch/Arch.h"
+#include "base/Event.h"
+#include "base/IEventQueue.h"
 #include "base/Log.h"
+#include "common/Settings.h"
 #include "platform/OSXKeyLayoutResource.h"
 #include "platform/OSXMediaKeySupport.h"
 
 #include <Carbon/Carbon.h>
 #include <IOKit/hidsystem/IOHIDLib.h>
+#include <IOKit/hidsystem/IOHIDParameter.h>
 
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
@@ -233,7 +237,11 @@ AutoTISInputSourceRef copyKeyboardLayoutForKeyTranslation()
 //
 
 OSXKeyState::OSXKeyState(IEventQueue *events, std::vector<std::string> layouts, bool isLangSyncEnabled)
-    : KeyState(events, std::move(layouts), isLangSyncEnabled)
+    : KeyState(
+          events, std::move(layouts),
+          isLangSyncEnabled && !Settings::value(Settings::Client::MacNativeCapsLock).toBool()
+      ),
+      m_inputEvents(events)
 {
   init();
 }
@@ -241,19 +249,193 @@ OSXKeyState::OSXKeyState(IEventQueue *events, std::vector<std::string> layouts, 
 OSXKeyState::OSXKeyState(
     IEventQueue *events, deskflow::KeyMap &keyMap, std::vector<std::string> layouts, bool isLangSyncEnabled
 )
-    : KeyState(events, keyMap, std::move(layouts), isLangSyncEnabled)
+    : KeyState(
+          events, keyMap, std::move(layouts),
+          isLangSyncEnabled && !Settings::value(Settings::Client::MacNativeCapsLock).toBool()
+      ),
+      m_inputEvents(events)
 {
   init();
 }
 
+OSXKeyState::~OSXKeyState()
+{
+  cancelCapsTimer();
+}
+
+void OSXKeyState::cancelCapsTimer()
+{
+  if (m_capsTimer) {
+    m_inputEvents->removeHandler(EventTypes::Timer, m_capsTimer);
+    m_inputEvents->deleteTimer(m_capsTimer);
+    m_capsTimer = nullptr;
+  }
+}
+
+bool OSXKeyState::setNativeCapsLock(bool enabled)
+{
+  const auto driver = getEventDriver();
+  if (!driver || IOHIDSetModifierLockState(driver, kIOHIDCapsLockState, enabled) != KERN_SUCCESS) {
+    LOG_WARN("unable to set macOS Caps Lock state");
+    return false;
+  }
+  m_capsPressed = enabled;
+  // KeyMap will reconcile its modifier bookkeeping on the next key event.
+  return true;
+}
+
+bool OSXKeyState::selectCapsInputSource(bool asciiOnly)
+{
+  std::lock_guard<std::mutex> lock(g_tisMutex);
+  auto flag = [](TISInputSourceRef source, CFStringRef property) {
+    auto value = static_cast<CFBooleanRef>(TISGetInputSourceProperty(source, property));
+    return value && CFBooleanGetValue(value);
+  };
+  AutoTISInputSourceRef current(TISCopyCurrentKeyboardInputSource(), CFRelease);
+  if (!current)
+    return false;
+  const bool currentAscii = flag(current.get(), kTISPropertyInputSourceIsASCIICapable);
+  if (!currentAscii)
+    m_lastNonAsciiInputSource = inputSourceID(current.get());
+  if (asciiOnly && currentAscii)
+    return true;
+
+  // Use the Mac's last ASCII source, or its last selected non-ASCII input mode.
+  // No hard-coded Pinyin IDs or synthetic Control-Space shortcut are necessary.
+  if (asciiOnly || !currentAscii) {
+    AutoTISInputSourceRef ascii(TISCopyCurrentASCIICapableKeyboardInputSource(), CFRelease);
+    if (ascii && TISSelectInputSource(ascii.get()) == noErr)
+      return true;
+  } else {
+    AutoCFArray sources(TISCreateInputSourceList(nullptr, false), CFRelease);
+    TISInputSourceRef fallback = nullptr;
+    if (sources) {
+      for (CFIndex i = 0; i < CFArrayGetCount(sources.get()); ++i) {
+        auto source = static_cast<TISInputSourceRef>(const_cast<void *>(CFArrayGetValueAtIndex(sources.get(), i)));
+        auto category = static_cast<CFStringRef>(TISGetInputSourceProperty(source, kTISPropertyInputSourceCategory));
+        if (!category || !CFEqual(category, kTISCategoryKeyboardInputSource) ||
+            !flag(source, kTISPropertyInputSourceIsSelectCapable) || !flag(source, kTISPropertyInputSourceIsEnabled) ||
+            flag(source, kTISPropertyInputSourceIsASCIICapable))
+          continue;
+        if (!fallback)
+          fallback = source;
+        if (inputSourceID(source) == m_lastNonAsciiInputSource) {
+          fallback = source;
+          break;
+        }
+      }
+    }
+    if (fallback && TISSelectInputSource(fallback) == noErr)
+      return true;
+  }
+  LOG_WARN("unable to switch macOS input source; enable an ASCII and a non-ASCII input source");
+  return false;
+}
+
+void OSXKeyState::activateHeldCaps()
+{
+  cancelCapsTimer();
+  if (!m_capsButton || m_capsHeld)
+    return;
+  m_capsHeld = true;
+  if (selectCapsInputSource(true))
+    setNativeCapsLock(true);
+}
+
+bool OSXKeyState::nativeCapsLocked() const
+{
+  bool locked = false;
+  const auto driver = getEventDriver();
+  if (driver && IOHIDGetModifierLockState(driver, kIOHIDCapsLockState, &locked) == KERN_SUCCESS)
+    return locked;
+  return (pollActiveModifiers() & KeyModifierCapsLock) != 0;
+}
+
+void OSXKeyState::normalizeCapsKey(KeyID &id, KeyModifierMask &mask)
+{
+  if (!m_nativeCapsLock)
+    return;
+  const bool sourceCaps = (mask & KeyModifierCapsLock) != 0;
+  const bool localCaps = nativeCapsLocked();
+  m_capsPressed = localCaps;
+  // Ubuntu may send uppercase ASCII after a short Caps tap. Preserve Shift,
+  // but remove the source's lock effect so the Mac owns its input state.
+  if (sourceCaps != localCaps) {
+    if (id >= 'a' && id <= 'z')
+      id -= 'a' - 'A';
+    else if (id >= 'A' && id <= 'Z')
+      id += 'a' - 'A';
+  }
+  mask = (mask & ~KeyModifierCapsLock) | (localCaps ? KeyModifierCapsLock : 0);
+}
+
+void OSXKeyState::fakeKeyDown(KeyID id, KeyModifierMask mask, KeyButton button, const std::string &lang)
+{
+  if (m_nativeCapsLock && id == kKeyCapsLock) {
+    if (m_capsButton || !button)
+      return;
+    m_capsButton = button;
+    m_capsHeld = false;
+    m_capsWasLocked = nativeCapsLocked();
+    m_capsPressedAt = std::chrono::steady_clock::now();
+    if (m_capsWasLocked) {
+      // A tap while locked returns to lowercase without changing input source.
+      setNativeCapsLock(false);
+    } else {
+      m_capsTimer = m_inputEvents->newOneShotTimer(0.6, nullptr);
+      m_inputEvents->addHandler(EventTypes::Timer, m_capsTimer, [this](const auto &) { activateHeldCaps(); });
+    }
+    return;
+  }
+  normalizeCapsKey(id, mask);
+  KeyState::fakeKeyDown(id, mask, button, lang);
+}
+
+bool OSXKeyState::fakeKeyRepeat(
+    KeyID id, KeyModifierMask mask, int32_t count, KeyButton button, const std::string &lang
+)
+{
+  if (m_nativeCapsLock && (id == kKeyCapsLock || (m_capsButton && button == m_capsButton)))
+    return true;
+  normalizeCapsKey(id, mask);
+  return KeyState::fakeKeyRepeat(id, mask, count, button, lang);
+}
+
+bool OSXKeyState::fakeKeyUp(KeyButton button)
+{
+  if (m_nativeCapsLock && m_capsButton && button == m_capsButton) {
+    cancelCapsTimer();
+    if (!m_capsWasLocked && !m_capsHeld) {
+      // Also check elapsed time if the release was queued before the timer.
+      if (std::chrono::steady_clock::now() - m_capsPressedAt >= std::chrono::milliseconds(600))
+        activateHeldCaps();
+      else
+        selectCapsInputSource(false);
+    }
+    m_capsButton = 0;
+    return true;
+  }
+  return KeyState::fakeKeyUp(button);
+}
+
+void OSXKeyState::fakeAllKeysUp()
+{
+  // Disconnect/leave is cancellation, never a short Caps tap.
+  cancelCapsTimer();
+  m_capsButton = 0;
+  m_capsHeld = false;
+  KeyState::fakeAllKeysUp();
+}
+
 void OSXKeyState::init()
 {
+  m_nativeCapsLock = Settings::value(Settings::Client::MacNativeCapsLock).toBool();
   m_deadKeyState = 0;
   m_shiftPressed = false;
   m_controlPressed = false;
   m_altPressed = false;
   m_superPressed = false;
-  m_capsPressed = false;
+  m_capsPressed = (pollActiveModifiers() & KeyModifierCapsLock) != 0;
   m_shiftRightPressed = false;
   m_controlRightPressed = false;
   m_altRightPressed = false;
@@ -579,21 +761,25 @@ CGEventFlags OSXKeyState::getDeviceDependedFlags() const
 {
   CGEventFlags modifiers = 0;
 
-  if (m_shiftPressed) {
-    modifiers |= m_shiftRightPressed ? NX_DEVICERSHIFTKEYMASK : NX_DEVICELSHIFTKEYMASK;
-  }
+  if (m_shiftLeftPressed)
+    modifiers |= NX_DEVICELSHIFTKEYMASK;
+  if (m_shiftRightPressed)
+    modifiers |= NX_DEVICERSHIFTKEYMASK;
 
-  if (m_controlPressed) {
-    modifiers |= m_controlRightPressed ? NX_DEVICERCTLKEYMASK : NX_DEVICELCTLKEYMASK;
-  }
+  if (m_controlLeftPressed)
+    modifiers |= NX_DEVICELCTLKEYMASK;
+  if (m_controlRightPressed)
+    modifiers |= NX_DEVICERCTLKEYMASK;
 
-  if (m_altPressed) {
-    modifiers |= m_altRightPressed ? NX_DEVICERALTKEYMASK : NX_DEVICELALTKEYMASK;
-  }
+  if (m_altLeftPressed)
+    modifiers |= NX_DEVICELALTKEYMASK;
+  if (m_altRightPressed)
+    modifiers |= NX_DEVICERALTKEYMASK;
 
-  if (m_superPressed) {
-    modifiers |= m_superRightPressed ? NX_DEVICERCMDKEYMASK : NX_DEVICELCMDKEYMASK;
-  }
+  if (m_superLeftPressed)
+    modifiers |= NX_DEVICELCMDKEYMASK;
+  if (m_superRightPressed)
+    modifiers |= NX_DEVICERCMDKEYMASK;
 
   return modifiers;
 }
@@ -604,9 +790,7 @@ CGEventFlags OSXKeyState::getKeyboardEventFlags() const
   // http://tinyurl.com/pxl742y
   CGEventFlags modifiers = getModifierStateAsOSXFlags();
 
-  if (!m_capsPressed) {
-    modifiers |= getDeviceDependedFlags();
-  }
+  modifiers |= getDeviceDependedFlags();
 
   return modifiers;
 }
@@ -615,40 +799,36 @@ void OSXKeyState::setKeyboardModifiers(CGKeyCode virtualKey, bool keyDown)
 {
   switch (virtualKey) {
   case s_shiftVK:
-    m_shiftPressed = keyDown;
-    if (keyDown)
-      m_shiftRightPressed = false;
+    m_shiftLeftPressed = keyDown;
+    m_shiftPressed = m_shiftLeftPressed || m_shiftRightPressed;
     break;
   case s_shiftRightVK:
-    m_shiftPressed = keyDown;
     m_shiftRightPressed = keyDown;
+    m_shiftPressed = m_shiftLeftPressed || m_shiftRightPressed;
     break;
   case s_controlVK:
-    m_controlPressed = keyDown;
-    if (keyDown)
-      m_controlRightPressed = false;
+    m_controlLeftPressed = keyDown;
+    m_controlPressed = m_controlLeftPressed || m_controlRightPressed;
     break;
   case s_controlRightVK:
-    m_controlPressed = keyDown;
     m_controlRightPressed = keyDown;
+    m_controlPressed = m_controlLeftPressed || m_controlRightPressed;
     break;
   case s_altVK:
-    m_altPressed = keyDown;
-    if (keyDown)
-      m_altRightPressed = false;
+    m_altLeftPressed = keyDown;
+    m_altPressed = m_altLeftPressed || m_altRightPressed;
     break;
   case s_altRightVK:
-    m_altPressed = keyDown;
     m_altRightPressed = keyDown;
+    m_altPressed = m_altLeftPressed || m_altRightPressed;
     break;
   case s_superVK:
-    m_superPressed = keyDown;
-    if (keyDown)
-      m_superRightPressed = false;
+    m_superLeftPressed = keyDown;
+    m_superPressed = m_superLeftPressed || m_superRightPressed;
     break;
   case s_superRightVK:
-    m_superPressed = keyDown;
     m_superRightPressed = keyDown;
+    m_superPressed = m_superLeftPressed || m_superRightPressed;
     break;
   case s_capsLockVK:
     m_capsPressed = keyDown;

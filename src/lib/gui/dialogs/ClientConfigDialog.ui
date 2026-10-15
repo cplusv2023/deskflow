@@ -38,6 +38,16 @@
     </widget>
    </item>
    <item>
+    <widget class="QCheckBox" name="cbMacNativeCapsLock">
+     <property name="text">
+      <string>Mac Caps Lock: tap to switch input source, hold for uppercase</string>
+     </property>
+     <property name="toolTip">
+      <string>Tap to switch between ASCII and the last non-ASCII input source on this Mac. Hold for 0.6 seconds to enable Caps Lock; tap again to disable it. Keeps the Mac input source independent of the server. Requires both input sources to be enabled on the Mac.</string>
+     </property>
+    </widget>
+   </item>
+   <item>
     <widget class="QGroupBox" name="groupBox">
      <property name="toolTip">
       <string>Reverse horizontal and vertical scrolling independently for input received from the server. The system scrolling preference is unchanged.</string>

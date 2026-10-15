@@ -7,6 +7,7 @@
 #include "ClientConfigDialog.h"
 #include "ui_ClientConfigDialog.h"
 
+#include "common/PlatformInfo.h"
 #include "common/Settings.h"
 #include "gui/widgets/SettingsDialogButtonBox.h"
 
@@ -19,6 +20,7 @@ ClientConfigDialog::ClientConfigDialog(QWidget *parent)
 {
   ui->setupUi(this);
   layout()->addWidget(m_buttonBox);
+  ui->cbMacNativeCapsLock->setVisible(deskflow::platform::isMac());
   initConnections();
   load();
   updateControls();
@@ -41,7 +43,8 @@ void ClientConfigDialog::updateControls() const
 {
   const auto writable = Settings::isWritable();
   ui->cbDynamicConnectTime->setEnabled(writable);
-  ui->cbLanguageSync->setEnabled(writable);
+  ui->cbMacNativeCapsLock->setEnabled(writable);
+  ui->cbLanguageSync->setEnabled(writable && !(deskflow::platform::isMac() && ui->cbMacNativeCapsLock->isChecked()));
   ui->cbXScrollInvert->setEnabled(writable);
   ui->sbXScrollScale->setEnabled(writable);
   ui->cbYScrollInvert->setEnabled(writable);
@@ -58,6 +61,12 @@ void ClientConfigDialog::initConnections() const
   connect(
       ui->cbDynamicConnectTime, &QCheckBox::checkStateChanged, this, &ClientConfigDialog::setButtonBoxEnabledButtons
   );
+  connect(ui->cbMacNativeCapsLock, &QCheckBox::toggled, this, [this](bool checked) {
+    if (deskflow::platform::isMac() && checked)
+      ui->cbLanguageSync->setChecked(false);
+    updateControls();
+    setButtonBoxEnabledButtons();
+  });
   connect(ui->cbLanguageSync, &QCheckBox::checkStateChanged, this, &ClientConfigDialog::setButtonBoxEnabledButtons);
   connect(ui->cbYScrollInvert, &QCheckBox::checkStateChanged, this, &ClientConfigDialog::setButtonBoxEnabledButtons);
   connect(ui->sbYScrollScale, &QDoubleSpinBox::valueChanged, this, &ClientConfigDialog::setButtonBoxEnabledButtons);
@@ -68,7 +77,8 @@ void ClientConfigDialog::initConnections() const
 
 bool ClientConfigDialog::isModified() const
 {
-  return (ui->cbDynamicConnectTime->isChecked() != Settings::value(Settings::Client::DynamicConnectionRetry).toBool()
+  return (ui->cbMacNativeCapsLock->isChecked() != Settings::value(Settings::Client::MacNativeCapsLock).toBool()) ||
+         (ui->cbDynamicConnectTime->isChecked() != Settings::value(Settings::Client::DynamicConnectionRetry).toBool()
          ) ||
          (ui->cbLanguageSync->isChecked() != Settings::value(Settings::Client::LanguageSync).toBool()) ||
          (ui->cbYScrollInvert->isChecked() != Settings::value(Settings::Client::InvertYScroll).toBool()) ||
@@ -79,7 +89,9 @@ bool ClientConfigDialog::isModified() const
 
 bool ClientConfigDialog::isDefault() const
 {
-  return (ui->cbDynamicConnectTime->isChecked() ==
+  return (ui->cbMacNativeCapsLock->isChecked() == Settings::defaultValue(Settings::Client::MacNativeCapsLock).toBool()
+         ) &&
+         (ui->cbDynamicConnectTime->isChecked() ==
           Settings::defaultValue(Settings::Client::DynamicConnectionRetry).toBool()) &&
          (ui->cbLanguageSync->isChecked() == Settings::defaultValue(Settings::Client::LanguageSync).toBool()) &&
          (ui->cbYScrollInvert->isChecked() == Settings::defaultValue(Settings::Client::InvertYScroll).toBool()) &&
@@ -100,6 +112,9 @@ void ClientConfigDialog::load()
 {
   ui->cbDynamicConnectTime->setChecked(Settings::value(Settings::Client::DynamicConnectionRetry).toBool());
   ui->cbLanguageSync->setChecked(Settings::value(Settings::Client::LanguageSync).toBool());
+  ui->cbMacNativeCapsLock->setChecked(Settings::value(Settings::Client::MacNativeCapsLock).toBool());
+  if (deskflow::platform::isMac() && ui->cbMacNativeCapsLock->isChecked())
+    ui->cbLanguageSync->setChecked(false);
   ui->cbYScrollInvert->setChecked(Settings::value(Settings::Client::InvertYScroll).toBool());
   ui->sbYScrollScale->setValue(Settings::value(Settings::Client::YScrollScale).toDouble());
   ui->cbXScrollInvert->setChecked(Settings::value(Settings::Client::InvertXScroll).toBool());
@@ -110,6 +125,7 @@ void ClientConfigDialog::resetToDefault()
 {
   ui->cbDynamicConnectTime->setChecked(Settings::defaultValue(Settings::Client::DynamicConnectionRetry).toBool());
   ui->cbLanguageSync->setChecked(Settings::defaultValue(Settings::Client::LanguageSync).toBool());
+  ui->cbMacNativeCapsLock->setChecked(Settings::defaultValue(Settings::Client::MacNativeCapsLock).toBool());
   ui->cbYScrollInvert->setChecked(Settings::defaultValue(Settings::Client::InvertYScroll).toBool());
   ui->sbYScrollScale->setValue(Settings::defaultValue(Settings::Client::YScrollScale).toDouble());
   ui->cbXScrollInvert->setChecked(Settings::defaultValue(Settings::Client::InvertXScroll).toBool());
@@ -118,6 +134,8 @@ void ClientConfigDialog::resetToDefault()
 
 void ClientConfigDialog::save()
 {
+  if (deskflow::platform::isMac())
+    Settings::setValue(Settings::Client::MacNativeCapsLock, ui->cbMacNativeCapsLock->isChecked());
   Settings::setValue(Settings::Client::DynamicConnectionRetry, ui->cbDynamicConnectTime->isChecked());
   Settings::setValue(Settings::Client::LanguageSync, ui->cbLanguageSync->isChecked());
   Settings::setValue(Settings::Client::InvertYScroll, ui->cbYScrollInvert->isChecked());

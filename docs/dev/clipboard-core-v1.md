@@ -197,3 +197,10 @@ GUI 展示可用、失败、挂载和断线状态；Debug 日志含文件 op、r
 Mac `0736934e6` 的证据仍仅为编译；Ubuntu 新结果与复现命令见进度记录。
 没有实际跨机 Finder↔Files 复制结果，也未完成集成路径的资源峰值、完整取消矩阵、旧端握手或打包签名。
 后续双机验收继续使用本文件冻结的协议，并复用 `clipboard-m5-integration.md` 的场景清单。
+
+## Mac 原生键位与输入法
+
+Super/Windows → Command、Alt → Option、Ctrl → Control，服务器修饰键映射应保持同名。
+客户端默认启用远程 Caps 短按切换、长按 600 ms 开启大写；再次按下关闭大写。
+需启用 ABC 与拼音等输入源。选项 `client/macNativeCapsLock` 可关闭，启用时 Mac 不跟随服务器输入语言。
+详细边界与未验收说明见 [原生输入修复记录](clipboard-tests/2026-10-16-macos-native-input.md)。
