@@ -7,6 +7,7 @@
 #include "platform/PortalClipboard.h"
 
 #include "base/Log.h"
+#include "clipboard/CoreClipboard.h"
 #include "platform/EiClipboard.h"
 
 #include <cstring>
@@ -189,6 +190,9 @@ QByteArray PortalClipboard::readSelectionBytes(XdpSession *session, const char *
 
 void PortalClipboard::claimOwnership(EiClipboard *cache, XdpSession *session)
 {
+  const clipboard::LegacyClipboardGuard access;
+  if (!access)
+    return;
   if (!cache || !session)
     return;
 
@@ -212,6 +216,11 @@ void PortalClipboard::claimOwnership(EiClipboard *cache, XdpSession *session)
 
 void PortalClipboard::serveSelectionTransfer(EiClipboard *cache, XdpSession *session, const char *mime, uint32_t serial)
 {
+  const clipboard::LegacyClipboardGuard access;
+  if (!access) {
+    xdp_session_selection_write_done(session, serial, false);
+    return;
+  }
   LOG_DEBUG("clipboard selection transfer requested, mime: %s, serial: %u", mime, serial);
 
   const auto *requested = findSupportedMime(mime);
@@ -278,6 +287,9 @@ bool PortalClipboard::readSelectionIntoCache(
     EiClipboard *cache, XdpSession *session, const char *const *mimeTypes, qint64 maxBytes
 )
 {
+  const clipboard::LegacyClipboardGuard access;
+  if (!access)
+    return false;
   if (!cache || !session || !mimeTypes || !mimeTypes[0])
     return false;
 

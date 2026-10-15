@@ -36,7 +36,7 @@ SettingsDialog::SettingsDialog(QWidget *parent, const ServerConfig &serverConfig
   m_fileClipboard->setEnabled(Settings::isWritable());
   m_fileClipboard->setToolTip(
       tr("Requires this build on both computers, TLS with client certificate verification, and macFUSE FSKit / FUSE3. "
-         "Ubuntu X11 only. Restart the connection after changing this setting.")
+         "Ubuntu X11 or GNOME Wayland with XWayland. Restart the connection after changing this setting.")
   );
 #ifndef DESKFLOW_CLIPBOARD_FILES
   m_fileClipboard->setEnabled(false);

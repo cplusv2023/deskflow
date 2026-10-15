@@ -11,6 +11,7 @@
 #include "base/Event.h"
 #include "base/Log.h"
 #include "base/TMethodJob.h"
+#include "clipboard/CoreClipboard.h"
 #include "common/Settings.h"
 #include "deskflow/ClipboardTypes.h"
 #include "platform/EiClipboard.h"
@@ -740,6 +741,8 @@ void PortalInputCapture::handleActivated(
   m_isActive = true;
 
 #ifdef HAVE_LIBPORTAL_CLIPBOARD
+  if (clipboard::coreClipboardActive())
+    return;
   if (m_session) {
     LOG_DEBUG("reading clipboard selection on activation");
     m_computer->sendClipboardEvent(EventTypes::ClipboardGrabbed, kClipboardClipboard);

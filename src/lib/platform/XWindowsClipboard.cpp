@@ -722,9 +722,8 @@ void XWindowsClipboard::motifFillCache()
   // Never send local source or FUSE mount paths to a legacy peer as text.
   for (const char *name : {"text/uri-list", "x-special/gnome-copied-files", "application/x-gnome-copied-files"}) {
     const auto fileTarget = XInternAtom(m_display, name, False);
-    for (uint32_t i = 0; i < numTargets; ++i)
-      if (targets[i] == fileTarget)
-        return;
+    if (motifFormats.contains(fileTarget))
+      return;
   }
 #endif
 

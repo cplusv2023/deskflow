@@ -1,26 +1,31 @@
 # 内嵌剪贴板首版：构建、使用与协议
 
-更新：2026-10-15。基线：Ubuntu `ea9190bcd`，在 `macos` 分支合并并统一实现。
+更新：2026-10-15。基线：`macos` 集成提交 `0736934e6`，Ubuntu 分支继续修复与验证。
 
 这是直接内嵌 Deskflow core/GUI 的实验首版，不需要独立 SSH 工具或手动启动服务。
-当前完成代码集成与 Mac 编译；**尚无本次新增链路的双机运行验收结果**。
-遵照用户要求，本轮不运行单元、桌面、挂载或网络测试；历史原型结果不能替代此次验收。
+Mac 组的集成提交只完成编译。本轮 Ubuntu 已增加本地 TLS/runtime、真实 core 会话和原生
+GNOME 测试，实际结果见 [Ubuntu 进度](clipboard-progress.md#ubuntu-core-v1-落地记录)。
+**尚无 Mac↔Ubuntu 实机验收结果**；本地两个进程不计作跨机器通过。
 
 ## 范围
 
-- 一台 macOS 与一台 Ubuntu **X11 登录会话**，任一方可作 Deskflow server。
+- 一台 macOS 与一台 Ubuntu **X11 或 GNOME Wayland + XWayland 会话**，任一方可作 Deskflow server。
 - 文件、目录、多文件、空文件、UTF-8 名称；远端公告只有固定元数据，FUSE 在应用读取时请求正文。
 - 普通文件显式使用 `detectable`，检测到变更返回错误；不承诺不可变快照。
 - 文本、HTML、PNG 使用同一调度与连接。首版对这些小格式先做有界采集（总计 16 MiB），
   再以最多 256 KiB 的逐块确认传输；此处不是远程格式正文的按需 RPC。
 - 旧版对端使用原有剪贴板；启用新通道时暂停旧剪贴板采集/写入，键鼠仍走原主连接。
-- 多客户端中转、Wayland Portal/XWayland 全桌面桥接、Windows、File Provider、拖放、剪切移动不在本版范围。
+- GNOME Wayland 的剪贴板独立走 XWayland；键鼠继续使用现有 Portal。
+  新 runtime 启用时，Portal 的旧剪贴板读缓存、claim 和传输通过同一互斥门控暂停，清理 helper 后恢复。
+  真实 Portal 会话中的切屏、权限和休眠恢复仍需验收。
+- 多客户端中转、GNOME 以外的 Wayland、Windows、File Provider、拖放、剪切移动不在本版范围。
   第二个客户端加入会关闭已建立的文件通道；回到单客户端后需重新连接。
 
 ## 构建
 
-两端必须包含同一集成提交。**Ubuntu 不能仅运行 `ea9190bcd`**：那个提交只提供本地组件和探针，
-没有协议 1.9 代理、TLS 绑定或 GUI 开关。Ubuntu 组应合并本次 `macos` 集成分支后构建，勿再独立定义线格式。
+两端必须包含兼容的协议集成代码。**Ubuntu 不能仅运行 `ea9190bcd` 或未经修复的 `0736934e6`**：
+前者没有 core 通道，后者有 Linux 编译错误并拒绝 Wayland。本轮 Ubuntu 修复沿用同一 1.9/profile 1，
+没有另建一套跨端线格式。
 
 ```sh
 cmake -S . -B build/clipboard-v1 -G Ninja \
@@ -37,7 +42,7 @@ helper 仍使用原型名称以复用已有实现，但由 core 自动管理，�
 
 ## 使用
 
-1. Mac 安装 macFUSE 并启用其 FSKit 模块；Ubuntu 使用 X11 登录会话与可用的 FUSE3。
+1. Mac 安装 macFUSE 并启用其 FSKit 模块；Ubuntu 使用 X11 或 GNOME Wayland 会话、可用的 `DISPLAY` 和 FUSE3。
 2. 两端使用本版 Deskflow，保留“共享剪贴板”总开关；启用 TLS，server 要求并验证客户端证书。
    按原 Deskflow 流程信任双方指纹。未满足双向认证时，文件扩展不可用，主连接仍可正常工作。
 3. 两端设置中勾选 **Share files with macOS / Ubuntu (experimental)**，重启连接。
@@ -156,6 +161,24 @@ List/stat 由固定完整 manifest 提供，本 profile 不另设目录分页网
   新的本地复制、server revision 或 native owner/changeCount 不符会阻止过期发布。
 - 正常退出依次关闭 bridge、撤销源、终止 helper、卸载仅本会话拥有的路径。
   helper 监视 core 父进程；异常退出后请求结束。无法卸载的路径保留并记录日志，不递归删除挂载树。
+- core 创建 helper 时清空继承的信号屏蔽集，使正常停止和父进程退出后的 SIGTERM 可以到达 FUSE。
+
+### Ubuntu 本地采集与发布
+
+GNOME 的 Wayland 代理可能拒绝 `TIMESTAMP` 转换。Ubuntu runtime 使用 `watch --capture`，
+在一条持续订阅 XFixes 的连接上采集 TARGETS 和所有表示；过程中 owner 或同窗口 generation 改变，
+整次采集失败，不拼接不同复制操作的数据。独立读进程的显式时间戳校验仍保持严格。
+Ubuntu 客户端启动时只记录既有 owner，初始选择由 server 公告；后续本地复制正常参与排序。
+Linux 的 Ready 在后端监听初始化完成后报告，避免用户在监听尚未启动时开始复制。
+
+内部 stdout 管道用 JSONL/base64 提交一次小格式采集，总原始正文不超过 16 MiB，接收缓冲上限
+32 MiB；该模式禁止 `--log`，不把正文写进诊断日志。文件公告只提交路径引用，不读取文件主体。
+这只是本机 helper 接口；网络仍使用上文的二进制字段和原始字节。
+
+无 `TIMESTAMP` 时取得 X server 时间作为采集边界。最终发布使用该边界执行
+`XSetSelectionOwner`，结合 owner 和监听 revision 检查；新复制已经发生时，X server 会拒绝
+旧时间的 claim，而不是用最新时间覆盖新内容。依据见
+[XSetSelectionOwner 的时间约束](https://www.x.org/releases/X11R7.5/doc/libX11/libX11.html)。
 
 ## 定位问题与验收边界
 
@@ -163,6 +186,6 @@ GUI 展示可用、失败、挂载和断线状态；Debug 日志含文件 op、r
 不记录 TLS 绑定密钥或文件正文。大量逐范围日志默认不写独立增长的 JSONL 文件。
 到达挂载保留上限后，先等旧复制结束再重连；不要在应用仍读取时手动卸载。
 
-本轮仅有：Mac feature-on 完整编译、core/GUI/helper 增量编译、X11 helper 语法编译检查。
-没有实际跨机 TLS/Finder/Files 复制结果，没有新增资源峰值、取消矩阵、旧端握手或打包签名结果。
-后续双机验收使用本文件冻结的协议，并复用 `clipboard-m5-integration.md` 的场景清单；不得将编译成功记为 M5 验收通过。
+Mac `0736934e6` 的证据仍仅为编译；Ubuntu 新结果与复现命令见进度记录。
+没有实际跨机 Finder↔Files 复制结果，也未完成集成路径的资源峰值、完整取消矩阵、旧端握手或打包签名。
+后续双机验收继续使用本文件冻结的协议，并复用 `clipboard-m5-integration.md` 的场景清单。

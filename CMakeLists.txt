@@ -22,7 +22,7 @@ if(POLICY CMP0207)
 endif()
 
 #Project level options
-option(BUILD_CLIPBOARD_FILES "Build integrated experimental macOS/X11 file clipboard (requires FUSE3)" OFF)
+option(BUILD_CLIPBOARD_FILES "Build integrated experimental macOS/Linux file clipboard (requires FUSE3)" OFF)
 if(BUILD_CLIPBOARD_FILES AND WIN32)
   message(FATAL_ERROR "File clipboard supports macOS and Linux/X11")
 endif()

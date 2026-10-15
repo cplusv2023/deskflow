@@ -10,6 +10,7 @@
 
 #include "base/Log.h"
 #include "base/TMethodJob.h"
+#include "clipboard/CoreClipboard.h"
 #include "common/Settings.h"
 
 #ifdef HAVE_LIBPORTAL_CLIPBOARD
@@ -256,6 +257,8 @@ void PortalRemoteDesktop::handleSelectionTransfer(XdpSession *session, const cha
 void PortalRemoteDesktop::handleSelectionOwnerChanged(XdpSession *session, char **mimeTypes, gboolean isOwner) const
 {
 #ifdef HAVE_LIBPORTAL_CLIPBOARD
+  if (clipboard::coreClipboardActive())
+    return;
   if (isOwner) {
     LOG_DEBUG("portal remote desktop selection owner changed, we own it, ignoring");
     return;

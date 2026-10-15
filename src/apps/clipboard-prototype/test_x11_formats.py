@@ -6,6 +6,7 @@ private display. Set XVFB_BINARY or pass --xvfb for an unpacked local Xvfb.
 """
 
 import argparse
+import base64
 import ctypes as C
 import ctypes.util
 import json
@@ -463,6 +464,48 @@ def main():
             stdout, stderr = capture.communicate(timeout=5)
             assert capture.returncode != 0 and not stdout and b'"OWNER_CHANGED"' in stderr, (stdout, stderr)
 
+            # A native Wayland proxy can reject TIMESTAMP. Capture all file
+            # metadata on one watched connection instead of relaxing generation
+            # validation between two independent readers.
+            snapshot = subprocess.Popen([str(tool), "watch", "--capture", "--once", "--timeout-ms", "3000",
+                                         "--origin", "snapshot-reader"], env=environment,
+                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            processes.append(snapshot)
+            for target in ("TIMESTAMP", "TARGETS", "TIMESTAMP", "text/uri-list"):
+                request = external_owner.wait(lambda event: event.type == 30).request
+                assert request.target == external_owner.atom(target), target
+                if target == "TIMESTAMP":
+                    external_owner.notify(request, 0)
+                elif target == "TARGETS":
+                    external_owner.put32(request.requestor, request.property, external_owner.atom("ATOM"),
+                                         [external_owner.atom("text/uri-list")])
+                    external_owner.notify(request, request.property)
+                else:
+                    external_owner.put8(request.requestor, request.property, request.target, b"file:///tmp/native-proxy\r\n")
+                    external_owner.notify(request, request.property)
+            stdout, stderr = snapshot.communicate(timeout=5)
+            assert snapshot.returncode == 0, stderr
+            captured_snapshot = next(r for r in map(json.loads, stdout.splitlines()) if r["event"] == "clipboard_snapshot")
+            assert captured_snapshot["files"] == ["/tmp/native-proxy"]
+            assert captured_snapshot["selectionTimestamp"] > 0
+            # The same proxy window now owns a newer generation. A delayed
+            # publisher must lose even though that owner cannot answer TIMESTAMP.
+            time.sleep(0.01)
+            library.XSetSelectionOwner(external_owner.display, external_owner.clipboard, external_owner.window, 0)
+            library.XSync(external_owner.display, 0)
+            stale = run("publish", "--expected-owner", str(external_owner.window), "--expected-timestamp",
+                        str(captured_snapshot["selectionTimestamp"]), "/tmp/stale-publication", success=False)
+            assert b'"OWNER_CHANGED"' in stale.stdout, stale.stderr
+            assert library.XGetSelectionOwner(external_owner.display, external_owner.clipboard) == external_owner.window
+
+            snapshot_owner, _ = launch("snapshot-formats", "publish-formats", "--format",
+                                       "image/png=" + str(sources["image/png"]))
+            completed = run("watch", "--capture", "--once", "--origin", "different-origin")
+            full = next(r for r in map(json.loads, completed.stdout.splitlines()) if r["event"] == "clipboard_snapshot")
+            assert len(full["formats"]) == 1 and full["formats"][0]["mime"] == "image/png"
+            assert base64.b64decode(full["formats"][0]["bytesBase64"], validate=True) == values["image/png"]
+            stop(snapshot_owner)
+
             # A deliberately stalled independent owner lets us replace selection
             # ownership after INCR acceptance but before any successful payload.
             owner = Peer(library, display)
@@ -492,7 +535,9 @@ def main():
                                          "requestor-disappears", "INCR-concurrency-budget", "self-loop", "watch-once", "owner-replacement",
                                          "owner-changed-read", "same-owner-new-offer", "external-INCR-read", "atomic-output",
                                          "capture-file-URIs", "GNOME-cut-rejected", "invalid-file-lists", "file-list-budgets",
-                                         "format-budget", "provider-error", "capture-same-owner-new-offer"]}, indent=2))
+                                         "format-budget", "provider-error", "capture-same-owner-new-offer",
+                                         "snapshot-without-TIMESTAMP", "stale-claim-without-TIMESTAMP",
+                                         "bounded-format-snapshot"]}, indent=2))
             return 0
         finally:
             os.close(read_fd)

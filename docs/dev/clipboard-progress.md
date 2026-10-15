@@ -2,12 +2,13 @@
 
 更新日期：2026-10-15，Asia/Shanghai。
 
-本轮 `macos` 已合并 Ubuntu `ea9190bcd` 并统一公共接口，新增内嵌 core/GUI 首版。
-下表保留 Ubuntu 原组件验证结果；新的集成范围与编译证据见 [首版指南](clipboard-core-v1.md)，不视作 Ubuntu 双机验收通过。
+Ubuntu 已快进合并 `macos` 的 `0736934e6`，继续修复 Linux 构建、GNOME Wayland 接入、
+原生采集和 helper 生命周期。当前验证见 [Ubuntu core v1 落地记录](#ubuntu-core-v1-落地记录)，
+历史组件表不能代替本轮集成结果。真实 Mac↔Ubuntu 联调仍未完成。
 
 M0 至 M2 已完成同机原型验证：独立 C++20 工具可挂载只读 FUSE 文件、发布 X11 文件剪贴板，并由原生 Wayland Files 正常粘贴。单文件、空文件、目录、Unicode 文件名及 256 MiB + 123 字节文件已校验通过。模拟源按偏移生成内容，没有完整源文件或中间文件缓存。
 
-构建目标和模块约定见 [按需剪贴板构建目标与架构](clipboard-design.md)，操作说明见 [原型 README](../../src/apps/clipboard-prototype/README.md)。M0 至 M2 结果见 [首轮验证记录](clipboard-tests/2026-10-15-m0-m2.md)。M3/M4 已新增四格式 X11 后端、真实本地文件服务、whole-offer 租约、Broker 状态组件及 Unix socket → FUSE 独立进程链路，见 [本轮验证记录](clipboard-tests/2026-10-15-m3-m4.md)。该组件基线尚未包含内嵌运行时；本轮新增 TLS/core 接入的范围见首版指南，原生 Wayland 与双机验收仍未完成。
+构建目标和模块约定见 [按需剪贴板构建目标与架构](clipboard-design.md)，操作说明见 [原型 README](../../src/apps/clipboard-prototype/README.md)。M0 至 M2 结果见 [首轮验证记录](clipboard-tests/2026-10-15-m0-m2.md)。M3/M4 的历史组件结果见 [验证记录](clipboard-tests/2026-10-15-m3-m4.md)。本轮原生 GNOME 四格式双向、本地 TLS/runtime 与 Files 粘贴已有实际结果；Mac 实机和真实 Portal 切屏回归仍待完成。
 
 与 macOS 组对齐的读取结果、whole-offer 租约、版本与错误、共用数据和日志见 [跨端接口契约 v1 草案](clipboard-contract.md)。本轮组件已实现显式读取结果、租约和部分故障语义；当前 fork 的线格式已在首版指南冻结；此前同机实验通道不能单独当作已验收的跨机链路。M5 分步入口和验收门槛见 [core 接入计划](clipboard-m5-integration.md)。
 
@@ -30,15 +31,15 @@ M0 至 M2 已完成同机原型验证：独立 C++20 工具可挂载只读 FUSE 
 | 原有单元测试 | 已记录历史结果 | 2026-10-15 19:11 的 CTest 日志中 31 个测试目标通过、0 个失败；原始日志随构建目录清理。 |
 | FUSE 开发环境 | 已就绪 | 执行阶段已存在 `libfuse3-dev` 3.18.2，pkg-config 可解析；本轮未安装软件。 |
 | FUSE 挂载和虚拟文件读取 | 原型通过 | 普通用户挂载、随机/并发/短响应/EOF 读取、4 GiB 以上偏移及正常退出卸载通过。 |
-| GNOME XWayland 桥接 | 文件发布方向通过 | 原生 Wayland Files 已从 X11 文件公告正常粘贴；其他格式与采集方向留到 M3。 |
+| GNOME XWayland 桥接 | 四格式双向通过 | GTK4 原生 Wayland 与 XWayland 文本、HTML、PNG、文件列表双向；新 runtime 的 Files 粘贴通过。 |
 | 独立原型构建与测试 | 已通过 | 独立和主工程可选目标构建通过；新增 3 个 CTest 测试目标通过。 |
 | Ubuntu 分支提交前回归 | 已通过 | 仓库外干净构建主程序与两个原型工具，31 个原有单元测试及 1 个原型数据源测试通过。 |
-| Ubuntu 四格式后端 | 隔离 X11 验证通过 | 文本、HTML、PNG、文件列表，INCR、XFixes 监听、owner/timestamp 与回环；GNOME 原生四格式验收待补。 |
+| Ubuntu 四格式后端 | 隔离与原生双向通过 | 文本、HTML、PNG、文件列表；覆盖 INCR、XFixes、GNOME 无 TIMESTAMP 代理和回环，原生证据见本轮记录。 |
 | 本地文件服务 | 组件与独立进程通过 | LocalFileSource、显式 ReadResult、whole-offer 租约、版本检查及有界范围读取；真实文件仅 detectable 模式。 |
 | Broker | 文件公告状态组件通过 | ClipboardBroker 的异步动作、先租约后发布、迟到响应、旧公告保留和预算；非文件格式及平台／传输尚未统一接入。 |
 | 独立进程文件入口 | Unix socket → FUSE 通过 | 同用户会话、范围读取、空闲续租、短响应、错误与退出取消；不是远端 TLS。 |
-| 新协议和 core 集成 | 本轮已实现、待双机验收 | 1.9/profile 1、绑定 TLS、GUI 开关与 FUSE 生命周期已接入；Mac 编译通过，未运行新测试。 |
-| Ubuntu 双向原型验收 | 发送与接收组件通过 | 文件剪贴板采集→源服务→独立消费、RPC→FUSE 可运行；持续双向同步与原生验收仍待完成。 |
+| 新协议和 core 集成 | Ubuntu 首轮落地，M5 未整体验收 | 已接入 1.9/profile 1、绑定 TLS、GUI 和 FUSE；原生桥接、本地真实 core 进度见本轮记录，跨机与旧端矩阵待测。 |
+| Ubuntu 双向原型验收 | 本地首轮集成通过 | 实际 runtime、TLS、真实 core 双进程和原生 GTK4/Files 已测；真实 Portal 切屏和 Mac 双机待测。 |
 | Mac 与 Ubuntu 实机联调 | 当前阶段外 | Mac 按假设处理，不标记为已完成。 |
 
 原有单元测试通过只说明日志中的原有测试目标通过，不证明当前桌面的剪贴板桥接、Portal 权限、FUSE 或按需文件粘贴已经可用。
@@ -101,9 +102,9 @@ M0 至 M2 已完成同机原型验证：独立 C++20 工具可挂载只读 FUSE 
 | M0 | 原型开发准备 | FUSE 开发库、独立构建目标、输入数据和证据目录就绪，用户挂载能力通过。 | 已通过 |
 | M1 | 模拟源与虚拟文件 | 元数据不读取文件主体，随机范围和 EOF 正确，内存有界。 | 已通过 |
 | M2 | Files 接收方向 | 发布虚拟文件入口后可原生粘贴，无完整预下载和中间副本。 | 已通过，使用同机模拟源 |
-| M3 | Ubuntu 发送与格式读写 | Ubuntu 原生应用的四类格式可采集和发布，本地文件可供模拟端范围读取。 | 后端与文件发送已实现；原生 Wayland 四格式验收待补 |
-| M4 | Broker 与独立进程传输 | 生命周期、回环、并发窗口、故障、取消及旧公告租约通过。 | 状态组件与 RPC/FUSE 通过；持续运行时整合待补 |
-| M5 | Deskflow 集成与回归 | 正确协商和降级，文件流与键鼠隔离，U01 至 U15 全部完成验收。 | 接入入口已核对，尚未接入 core |
+| M3 | Ubuntu 发送与格式读写 | Ubuntu 原生应用的四类格式可采集和发布，本地文件可供模拟端范围读取。 | 原生 GTK4 四格式双向和真实文件发送通过 |
+| M4 | Broker 与独立进程传输 | 生命周期、回环、并发窗口、故障、取消及旧公告租约通过。 | 组件、RPC/FUSE、单 peer runtime 与旧目录保留通过；完整 TLS 故障矩阵待补 |
+| M5 | Deskflow 集成与回归 | 正确协商和降级，文件流与键鼠隔离，U01 至 U15 全部完成验收。 | 首版已接入并通过本地真实 core；Portal、旧端、性能和 Mac 实机待测 |
 
 M1 与 M2 构成第一条端到端原型。M3 的剪贴板采集探针可与 M1 独立开发，但正式整合在 M2 验证后进行。当前 GNOME 后端满足本机目标即可，不把其他 Wayland 合成器的 data-control 支持作为本阶段完成条件。
 
@@ -175,11 +176,11 @@ Files 可能尝试复制优化和元数据操作；未实现的操作应返回�
 
 ## 下一次开发任务
 
-1. 补齐 U04/U05 的原生 GNOME Wayland 四格式验证；当前隔离 Xvfb 的结果不代替原生应用证据。
-2. 将 ClipboardBroker 动作接到长期运行的 X11 后端、文件服务和多公告投影，验证真正的“A 目录复制期间新复制 B”。当前状态测试与固定单公告挂载分别通过，尚不是这条集成路径通过。
-3. 按 [M5-A 至 M5-E](clipboard-m5-integration.md) 推进 core 生命周期与唯一系统发布负责人，再做协议协商、TLS 会话绑定、legacy 和 GUI。先解决 Portal 在切屏时再次 claim 的冲突，不通过并行跑一个新发布器绕开。
+1. 与 Mac 使用兼容的 1.9/profile 1 构建做实机双向联调，分别交换 server/client 角色；先复用已通过的文件与四格式样本。
+2. 在真实 GNOME Portal core 会话中验证切屏、休眠、断线和总共享开关。互斥保护和 helper 生命周期已有代码及隔离测试，但不等于 Portal 交互验收。
+3. 完成旧 1.8 握手/剪贴板回归、大文件期间键鼠延迟与内存测量，再评估保留挂载达到 8 个后的安全回收交互。
 
-新 Unix socket 服务只接受同一用户，单连接最多一个在途请求；它用于冻结接口语义和独立进程测试。正式网络支持必须单独实现认证、能力协商、文件 TLS 连接和多端路由。
+Unix socket 探针仍仅限同用户本地测试；新 runtime 已使用认证绑定的独立 TLS 通道，多端中转仍不在首版范围。
 
 ## Ubuntu 验收矩阵
 
@@ -190,17 +191,17 @@ Files 可能尝试复制优化和元数据操作；未实现的操作应返回�
 | U01 | 本用户挂载与卸载 | FUSE 可挂载、读取、正常卸载；退出后无遗留工作进程。 | 已通过 |
 | U02 | 元数据与文件入口 | 仅调用 stat/readdir 或发布入口时，不请求任何文件主体字节；Files 自身类型探测的 read 另记。 | 已通过 |
 | U03 | Files 单文件粘贴 | 从远端虚拟源原生粘贴，实际读取触发 READ_RANGE，目标内容校验一致。 | 已通过 |
-| U04 | 原生 Wayland 剪贴板采集 | 文本、HTML、PNG、文件列表分别被正确捕获，记录使用后端。 | X11 隔离四格式通过；原生 Wayland 验收待补 |
-| U05 | 发布到原生 Wayland 应用 | 对应格式可粘贴；文件列表使用本机虚拟 URI；文本和文件路径不会混淆。 | 原生文件列表通过；其余隔离 X11 通过，原生待测 |
+| U04 | 原生 Wayland 剪贴板采集 | 文本、HTML、PNG、文件列表分别被正确捕获，记录使用后端。 | 原生 GdkWaylandDisplay 四格式采集通过；runtime 原生源→TLS 通过 |
+| U05 | 发布到原生 Wayland 应用 | 对应格式可粘贴；文件列表使用本机虚拟 URI；文本和文件路径不会混淆。 | GTK4 四格式双向通过；runtime 的 Nautilus 正常粘贴通过 |
 | U06 | 大文件与内存预算 | 文件大小和偏移覆盖 4 GiB 以上；在途字节与缓冲受限，不出现完整中间副本。 | 部分通过：4 GiB 以上范围、256 MiB 实际复制；更大完整复制待测 |
 | U07 | 多文件和目录 | 多层目录、空文件、空目录、Unicode 与空格名称能正常复制。 | 已通过当前样本 |
 | U08 | 随机与并发读取 | 非零偏移、跨块、EOF、乱序及并发请求返回正确字节和长度。 | 已通过模拟源与 FUSE 测试 |
-| U09 | 再次复制和回环 | A 传输期间复制 B，旧句柄继续读 A，A 目录中尚未打开的子文件也能继续 lookup/open；新粘贴对应 B，自身发布不反复回传。 | Broker/源租约/隔离 owner 测试通过；真实持续运行路径待整合 |
+| U09 | 再次复制和回环 | A 传输期间复制 B，旧句柄继续读 A，A 目录中尚未打开的子文件也能继续 lookup/open；新粘贴对应 B，自身发布不反复回传。 | 实际 runtime、真实 core 双进程和原生源模式通过；Mac 实机待测 |
 | U10 | 取消与断线 | 用户取消或连接断开后，读取及时结束并返回明确错误，释放句柄与请求。 | RPC/FUSE 超时、断线、进程退出取消通过；Files 用户取消和 core 断线待测 |
 | U11 | 源文件变化 | 删除、修改或权限变化有确定错误或已定义版本行为，不静默混合内容。 | detectable 模式源服务与 FUSE 错误通过；无 immutable 快照能力 |
 | U12 | 预览与按需语义 | 分别开关预览测试，记录提前读取来源；类型探测与缩略图读取均按真实 read 处理。 | 已通过 never/always 原生 Files 测试 |
-| U13 | 当前剪贴板与旧引用回收 | 被当前剪贴板或打开句柄引用的入口保持有效，无引用后才清理。 | whole-offer/空闲续租/释放组件通过；统一运行时待整合 |
-| U14 | 双向与焦点独立 | Ubuntu 与模拟端双向公告和读取，不依赖 Deskflow 当前活动屏幕。 | 独立组件不依赖焦点；持续双向及 core 路由待测 |
+| U13 | 当前剪贴板与旧引用回收 | 被当前剪贴板或打开句柄引用的入口保持有效，无引用后才清理。 | 组件、runtime 旧目录/续租/停止清理通过；保留挂载上限与复制完成后的回收交互待完善 |
+| U14 | 双向与焦点独立 | Ubuntu 与模拟端双向公告和读取，不依赖 Deskflow 当前活动屏幕。 | runtime/真实 core 在不切屏时双向通过；真实 Portal 切屏回归待补 |
 | U15 | Deskflow 回归 | 文件读取期间记录键鼠响应；新旧端协商正确，旧端未收到无法解析的新消息。 | 待执行 |
 
 文件系统原型不预设准确的吞吐或延迟阈值。首次运行记录吞吐、首次读取延迟、峰值 RSS、在途字节和并发请求数，随后制定有依据的预算。任何阶段都不能只因复制最终成功就省略内存与中间落盘检查。
@@ -261,3 +262,80 @@ inFlightBytes  activeRequests
 - 新增 ClipboardBroker 状态组件：无网络／平台调用，动作列表驱动；先取得租约、迟到公告防覆盖、原 owner 回环抑制、旧目录引用保留与预算。
 - 将 M5 的实际入口、Portal 冲突、版本选择、旧端边界和 TLS 会话绑定要求列入接入计划。未修改现有协议 minor，未向旧端增加消息，未把组件测试记作 core 集成或 Mac 联调通过。
 - 独立构建 8/8 CTest 通过、0 跳过；主工程三个可选目标编译通过。详见本轮验证记录，原生持续同步与 M5 仍按上述门槛推进。
+
+## Ubuntu core v1 落地记录
+
+2026-10-15，基于 `0736934e6`，在本机 Ubuntu 26.04.1 / GNOME 50.1 / Nautilus 50.2.2 实施。
+本节是当前状态，上文 M0–M4 历史记录及未更新的验收矩阵不作为本轮集成结论。
+
+### 实现
+
+- 合并 Mac 集成基线，保留统一的 1.9/profile 1、FileTypes、LocalFileSource、LocalFileRpc、TLS 和 FUSE；本轮没有修改网络 schema。
+- 修复 `XWindowsClipboard::motifFillCache()` 错用 ICCCM 局部变量导致的 feature-on 编译失败。
+- 允许 GNOME Wayland + XWayland；无 DISPLAY 或其他 Wayland 桌面明确报告不可用。GUI tooltip 和 Ready 状态显示实际后端。
+- PortalClipboard 的读取、缓存更新、claim 和旧选择传输持有 `LegacyClipboardGuard`，与新 runtime 的启停互斥；切屏入口也跳过旧读取。已经开始的旧操作先结束，再交接，新 helper 清理后才恢复旧路径。
+- GNOME 原生代理可能拒绝 TIMESTAMP。新增内部 `watch --capture`，在持续监听 XFixes 的同一连接采集所有表示，拒绝途中 owner/generation 改变；文件列表采集也改为同一连接。小格式总正文 16 MiB，内部 base64 管道缓冲 32 MiB，文件主体不走这个路径。
+- 发布用采集时的 X server 时间执行 SetSelectionOwner，避免同一代理窗口发生新复制后被旧结果覆盖；补了无 TIMESTAMP 的过期 claim 回归。
+- Ubuntu 客户端初始只监听、记录原 owner，启动时的既有选择由 server 公告；监听完成后才显示 Ready。修复真实 core 重连时旧初始选择覆盖新复制的竞争。Mac 客户端的启动公告仍需实机联调核对。
+- core 启动 helper 时重置信号屏蔽集，避免继承 Arch 的 SIGTERM 屏蔽，修复正常停止及父进程死亡后的 FUSE 清理。
+- 补齐 read 日志的 epoch、offerId、fileId、version、leaseId、handleId、requestId、offset、length、eof；不记录正文或认证密钥。
+- 恢复合并时遗漏的本地 RPC、四格式、RPC→FUSE 测试注册；新增实际 runtime 和真实 core 两种回归入口。
+
+### 构建和试用
+
+本轮使用 GCC 15.2、系统 Qt 6.10.2、OpenSSL 3.5.5、FUSE3 3.18.2。未安装系统软件；临时解包的 Xvfb 与 clang-format 20.1.0 仅用于验证。
+
+```sh
+cmake -S . -B build/ubuntu-clipboard-v1 -G Ninja \
+  -DCMAKE_BUILD_TYPE=Debug -DCMAKE_PREFIX_PATH=/usr \
+  -DQt6_DIR=/usr/lib/x86_64-linux-gnu/cmake/Qt6 -DOPENSSL_ROOT_DIR=/usr \
+  -DBUILD_CLIPBOARD_FILES=ON -DBUILD_INSTALLER=OFF \
+  -DBUILD_TESTS=ON -DBUILD_TESTING=ON -DSKIP_BUILD_TESTS=ON \
+  -DCLIPBOARD_PROTOTYPE_FUSE_TESTS=ON
+cmake --build build/ubuntu-clipboard-v1 --parallel 4
+XVFB_BINARY="$PWD/build/ubuntu-test-tools/usr/bin/Xvfb" QT_QPA_PLATFORM=minimal \
+  ctest --test-dir build/ubuntu-clipboard-v1 --output-on-failure
+```
+
+X11 隔离测试需要 Xvfb；本机已解包至 `build/ubuntu-test-tools/usr/bin/Xvfb`，没有安装到系统。
+其他机器可将 `XVFB_BINARY` 指向自己的 Xvfb；安装在 PATH 时可省略该环境变量。
+原生测试必须显式运行，不注册到普通 CTest；会替换桌面剪贴板并打开专用测试窗口：
+
+```sh
+/usr/bin/python3 src/apps/clipboard-prototype/test_gnome_clipboard.py \
+  --probe build/ubuntu-clipboard-v1/bin/deskflow-clipboard-probe
+XVFB_BINARY="$PWD/build/ubuntu-test-tools/usr/bin/Xvfb" \
+  /usr/bin/python3 src/apps/clipboard-prototype/test_core_runtime.py \
+  --harness build/ubuntu-clipboard-v1/bin/clipboard-core-harness \
+  --probe build/ubuntu-clipboard-v1/bin/deskflow-clipboard-probe --native-gnome
+```
+
+原生测试需要系统 PyGObject、GTK4 与 AT-SPI introspection，第二条另需 Xvfb。
+实际使用从 `build/ubuntu-clipboard-v1/bin/deskflow` 启动 GUI，按 [首版指南](clipboard-core-v1.md) 配置双方指纹、TLS 客户端认证和实验开关；helper 由 core 自动启动。
+
+### 已取得的证据与边界
+
+| 验证 | 结果及实际覆盖 |
+| --- | --- |
+| Feature-on | Ubuntu 完整工程、core、GUI、helper 和测试程序构建通过。 |
+| Feature-off | Ubuntu core 和 GUI 构建通过。 |
+| 完整 CTest | **43/43 通过，0 失败、0 跳过，13.06 秒**；包含公共库 5 项、原有 31 项及原型/runtime/真实 core 回归。 |
+| `clipboard_x11_formats` | 隔离 Xvfb 四格式、INCR、owner/generation、文件采集；新增无 TIMESTAMP snapshot、过期 claim、base64 有界小格式检查。 |
+| `clipboard_core_runtime` | 两个私有显示，实际 PeerLink/TLS/FUSE；测试宿主提供合成主会话绑定。双向四格式和文件、无文件预读、A→B 后旧目录、源变化、断线和退出；旧操作互斥交接、错误绑定不消费 listener、合法后续绑定通过。 |
+| `clipboard_core_session` | 两个真正的 deskflow-core，私有 X11/配置/证书/信任库/TMPDIR；主连接双向 TLS、1.9/DCAP、导出密钥绑定、双向复制、普通 IPC stop、重连和 SIGKILL 父进程后的 helper 退出/FUSE 卸载。没有合成主连接绑定。 |
+| 原生四格式 | GdkWaylandDisplay 的 GTK4 测试窗口与 XWayland 文本、HTML、PNG、文件列表双向字节一致；PNG 经 INCR。不是只在 Xvfb 改环境变量。 |
+| 原生 runtime | 一端本机 GNOME、另一端私有 Xvfb，GTK4 原生源→实际 runtime/TLS/FUSE；反向由 Nautilus `view.paste` 正常粘贴且内容相同。宿主仍提供合成主会话绑定，不计作 Portal core 或 Mac 实机通过。 |
+
+实际 core 文件样本包含 4 MiB + 10 字节文件、空文件、空目录和 Unicode 子项。A 的打开句柄关闭后、B 已发布时，仍能打开 A 中未访问的子项并逐文件校验 SHA-256。普通文件变化返回错误，不承诺不可变快照。
+
+本机原始日志位于忽略的 `build/ubuntu-clipboard-{configure,build,tests,session,native,native-runtime}.log`；
+CTest 详细日志在 `build/ubuntu-clipboard-v1/Testing/Temporary/LastTest.log`。构建产物与本机证据不提交 Git。
+
+### 仍需完成
+
+1. Mac↔Ubuntu 真机双向，交换 server/client 角色；Mac 最新原生代码的构建与 Finder 行为由 Mac 组验收。
+2. 真实 Wayland Portal core 的切屏/所有权、权限、休眠恢复、总开关和连接 reset。互斥逻辑编译/宿主测试通过不能替代真实 Portal 交互。
+3. 旧 1.8 双方向握手及剪贴板兼容、跨网防火墙、完整取消/超时矩阵、大文件期间键鼠延迟和峰值内存。
+4. 当前每会话最多保留 8 个接收挂载，达到上限需在旧复制结束后重连。尚无可靠的原生“目录复制完成”通知，不按最后一个句柄关闭或短期闲置自动删除旧树；安全回收交互与测试包仍需完善。
+
+本轮属于 Ubuntu 首版落地，不将 M5 标记为全部完成，也不将已有单机结果写成 Mac↔Ubuntu 已可交付。

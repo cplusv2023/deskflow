@@ -54,6 +54,7 @@ std::unique_ptr<PeerLink> PeerLink::connect(IStream *, unsigned short)
 #include <algorithm>
 #include <atomic>
 #include <charconv>
+#include <csignal>
 #include <future>
 #include <map>
 #include <openssl/crypto.h>
@@ -68,6 +69,22 @@ constexpr qsizetype queueLimit = 2 * 1024 * 1024 + 64 * 1024;
 constexpr qsizetype formatLimit = 16 * 1024 * 1024;
 constexpr qsizetype chunkLimit = 256 * 1024;
 std::atomic_bool reserved{false}, active{false};
+std::mutex legacyClipboardMutex;
+void setActive(bool value)
+{
+  const std::lock_guard lock(legacyClipboardMutex);
+  active = value;
+}
+QString backendName()
+{
+#ifdef Q_OS_MACOS
+  return "AppKit / macFUSE FSKit";
+#else
+  if (!qEnvironmentVariableIsEmpty("WAYLAND_DISPLAY") || qEnvironmentVariable("XDG_SESSION_TYPE") == "wayland")
+    return "GNOME Wayland via XWayland / FUSE3";
+  return "X11 / FUSE3";
+#endif
+}
 const QString origin = QUuid::createUuid().toString(QUuid::WithoutBraces);
 std::string str(const QString &s)
 {
@@ -191,7 +208,6 @@ public:
     if (m_stopped)
       return;
     m_stopped = true;
-    active = false;
     m_tick.stop();
     if (m_listener)
       m_listener->close();
@@ -234,6 +250,7 @@ public:
     for (const auto &path : m_formatFiles)
       QFile::remove(path);
     ::rmdir(m_dir.path().toUtf8().constData());
+    setActive(false);
     status("Disconnected; legacy clipboard restored");
   }
 
@@ -379,8 +396,10 @@ private:
       if (f != std::vector<std::string>{"ready"} || !msg.bytes.empty())
         throw std::runtime_error("expected ready");
       m_enabled = true;
-      active = true;
-      status("Ready: macOS / X11; detectable files, text, HTML, PNG");
+      setActive(true);
+#ifdef Q_OS_MACOS
+      status("Ready: " + backendName() + "; detectable files, text, HTML, PNG");
+#endif
       startWatcher();
       return;
     }
@@ -431,8 +450,13 @@ private:
       auto reply = dispatchFileRequest(*m_source, msg);
       qDebug().noquote() << "clipboard RPC" << qs(f[0]) << "requestId=" << qs(f[1]) << "status=" << qs(reply.fields[2])
                          << "returnedBytes=" << reply.bytes.size();
-      if (f[0] == "read" && f.size() == 7)
-        qDebug().noquote() << "clipboard range offset=" << qs(f[5]) << "length=" << qs(f[6]);
+      if (f[0] == "read" && reply.fields.size() == 13) {
+        const auto &r = reply.fields;
+        qDebug().noquote() << "clipboard range epoch=" << qs(r[3]) << "offerId=" << qs(r[4]) << "fileId=" << qs(r[5])
+                           << "version=" << qs(r[6]) << "leaseId=" << qs(r[7]) << "handleId=" << qs(r[8])
+                           << "requestId=" << qs(r[9]) << "offset=" << qs(r[10]) << "length=" << qs(r[11])
+                           << "eof=" << qs(r[12]);
+      }
       if (reply.fields.size() > 2 && reply.fields[2] != "OK")
         status("File request: " + qs(reply.fields[2]));
       reply.fields.insert(reply.fields.begin(), {"reply", channel});
@@ -516,6 +540,14 @@ private:
   QProcess *process(const QString &name, const QStringList &args)
   {
     auto *p = new QProcess(this);
+    // Arch's signal thread blocks termination signals in core threads. exec
+    // preserves that mask, so helpers must start unblocked for QProcess teardown
+    // and ParentWatch to reach their SIGTERM/FUSE handlers.
+    p->setChildProcessModifier([] {
+      sigset_t mask;
+      sigemptyset(&mask);
+      sigprocmask(SIG_SETMASK, &mask, nullptr);
+    });
     p->setProgram(helper(name));
     p->setArguments(args + QStringList{"--parent-pid", QString::number(QCoreApplication::applicationPid())});
     connect(p, &QProcess::readyReadStandardError, this, [p] { p->readAllStandardError(); });
@@ -523,11 +555,19 @@ private:
   }
   void startWatcher()
   {
-    m_watcher = process("deskflow-clipboard-probe", {"watch", "--origin", origin});
+    QStringList args{"watch", "--origin", origin};
+#ifndef Q_OS_MACOS
+    args << "--capture" << "--timeout-ms" << "10000";
+    if (!m_server)
+      args << "--skip-initial";
+#endif
+    m_watcher = process("deskflow-clipboard-probe", args);
     connect(m_watcher, &QProcess::readyReadStandardOutput, this, [this] {
       m_watchInput += m_watcher->readAllStandardOutput();
-      if (m_watchInput.size() > frameLimit) {
-        fail("watch metadata too large");
+      // Small formats are captured as one bounded native generation. The local
+      // JSONL pipe carries base64, while the network retains 256 KiB frames.
+      if (m_watchInput.size() > 2 * formatLimit) {
+        fail("native clipboard snapshot too large");
         return;
       }
       while (m_watchInput.contains('\n')) {
@@ -535,6 +575,10 @@ private:
         auto object = QJsonDocument::fromJson(m_watchInput.left(pos)).object();
         m_watchInput.remove(0, pos + 1);
         const auto event = object.value("event").toString();
+        if (event == "watch_initialized") {
+          status("Ready: " + backendName() + "; detectable files, text, HTML, PNG");
+          continue;
+        }
         if (event == "selfChange" || event == "self_offer_ignored") {
           if (object.contains("changeCount"))
             m_native = object;
@@ -544,7 +588,11 @@ private:
           m_native = object;
           continue;
         }
-        if (event != "clipboardChanged" && event != "clipboard_offer")
+        if (event == "announcement_skipped") {
+          status("Native clipboard capture: " + object.value("status").toString() + "; copy again to retry");
+          continue;
+        }
+        if (event != "clipboardChanged" && event != "clipboard_snapshot")
           continue;
         m_native = object;
         observed(object);
@@ -583,8 +631,33 @@ private:
     }
     m_capture.clear();
     m_captureTargets.clear();
+#ifndef Q_OS_MACOS
+    if (object.contains("files")) {
+      std::vector<std::filesystem::path> paths;
+      for (const auto &path : object.value("files").toArray())
+        paths.emplace_back(str(path.toString()));
+      announceFiles(paths, m_localToken);
+      return;
+    }
+    qsizetype total = 0;
+    for (const auto &format : object.value("formats").toArray()) {
+      const auto item = format.toObject();
+      const auto mime = str(item.value("mime").toString());
+      const auto decoded = QByteArray::fromBase64Encoding(
+          item.value("bytesBase64").toString().toLatin1(), QByteArray::AbortOnBase64DecodingErrors
+      );
+      if (!validMime(mime) || !decoded || m_capture.contains(mime) || decoded.decoded.size() > formatLimit - total) {
+        fail("invalid native clipboard snapshot");
+        return;
+      }
+      total += decoded.decoded.size();
+      m_capture.emplace(mime, decoded.decoded);
+    }
+    m_outgoing = std::move(m_capture);
+    m_outToken = m_localToken;
+    nextFormat();
+#else
     QStringList types;
-#ifdef Q_OS_MACOS
     for (const auto &item : object.value("items").toArray())
       for (const auto &type : item.toObject().value("types").toArray())
         types << type.toString();
@@ -599,22 +672,8 @@ private:
       m_captureTargets << "text/html";
     if (types.contains("public.png") || types.contains("public.tiff"))
       m_captureTargets << "image/png";
-#else
-    for (const auto &type : object.value("targets").toArray())
-      types << type.toString();
-    if (types.contains("text/uri-list") || types.contains("x-special/gnome-copied-files") ||
-        types.contains("application/x-gnome-copied-files")) {
-      captureFiles(m_localToken);
-      return;
-    }
-    if (types.contains("UTF8_STRING") || types.contains("text/plain;charset=utf-8") || types.contains("text/plain"))
-      m_captureTargets << "text/plain";
-    if (types.contains("text/html"))
-      m_captureTargets << "text/html";
-    if (types.contains("image/png"))
-      m_captureTargets << "image/png";
-#endif
     captureNext(m_localToken);
+#endif
   }
   void
   readNative(QStringList args, uint64_t token, std::function<void(QByteArray)> done, std::function<void()> skipped = {})
@@ -675,23 +734,27 @@ private:
       if (!doc.isArray()) return;
       for (const auto &path : doc.array()) paths.emplace_back(str(path.toString()));
 #endif
-      // A transient native owner notification must never re-export our own projection.
-      for (const auto &path : paths) {
-        const auto localPath = qs(path.lexically_normal().string());
-        if (localPath == m_dir.path() || localPath.startsWith(m_dir.path() + '/'))
-          return;
-      }
-      // No file body is read: only fixed, bounded metadata and source identity.
-      const auto result = m_source->createOffer(paths);
-      if (result.status != Status::Ok) {
-        status("File capture: " + qs(std::string(statusName(result.status))));
-        return;
-      }
-      auto msg = offerMessage(result.offer);
-      msg.fields.insert(msg.fields.begin(), {"files", std::to_string(token)});
-      send(std::move(msg));
-      status("File references announced; content is read only when pasted");
+      announceFiles(paths, token);
     });
+  }
+  void announceFiles(const std::vector<std::filesystem::path> &paths, uint64_t token)
+  {
+    // A transient native owner notification must never re-export our own projection.
+    for (const auto &path : paths) {
+      const auto localPath = qs(path.lexically_normal().string());
+      if (localPath == m_dir.path() || localPath.startsWith(m_dir.path() + '/'))
+        return;
+    }
+    // No file body is read: only fixed, bounded metadata and source identity.
+    const auto result = m_source->createOffer(paths);
+    if (result.status != Status::Ok) {
+      status("File capture: " + qs(std::string(statusName(result.status))));
+      return;
+    }
+    auto msg = offerMessage(result.offer);
+    msg.fields.insert(msg.fields.begin(), {"files", std::to_string(token)});
+    send(std::move(msg));
+    status("File references announced; content is read only when pasted");
   }
   void captureNext(uint64_t token)
   {
@@ -1020,9 +1083,14 @@ bool eligible()
     return false;
   }
 #ifndef Q_OS_MACOS
-  if (!qEnvironmentVariableIsEmpty("WAYLAND_DISPLAY") || qEnvironmentVariable("XDG_SESSION_TYPE") == "wayland" ||
-      qEnvironmentVariableIsEmpty("DISPLAY")) {
-    status("Unavailable: first release requires an X11 session");
+  if (qEnvironmentVariableIsEmpty("DISPLAY")) {
+    status("Unavailable: X11 / XWayland DISPLAY is required");
+    return false;
+  }
+  const bool wayland =
+      !qEnvironmentVariableIsEmpty("WAYLAND_DISPLAY") || qEnvironmentVariable("XDG_SESSION_TYPE") == "wayland";
+  if (wayland && !qEnvironmentVariable("XDG_CURRENT_DESKTOP").split(':').contains("GNOME", Qt::CaseInsensitive)) {
+    status("Unavailable: Wayland clipboard bridge currently supports GNOME with XWayland");
     return false;
   }
 #endif
@@ -1064,7 +1132,7 @@ struct PeerLink::Impl : QThread
       } catch (...) {
       }
     }
-    active = false;
+    setActive(false);
   }
   ~Impl() override
   {
@@ -1077,6 +1145,13 @@ struct PeerLink::Impl : QThread
 bool coreClipboardActive()
 {
   return active;
+}
+LegacyClipboardGuard::LegacyClipboardGuard() : m_lock(legacyClipboardMutex)
+{
+}
+LegacyClipboardGuard::operator bool() const
+{
+  return !active;
 }
 PeerLink::PeerLink(std::unique_ptr<Impl> impl) : m_impl(std::move(impl))
 {

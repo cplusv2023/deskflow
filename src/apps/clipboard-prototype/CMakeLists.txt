@@ -94,7 +94,35 @@ if(BUILD_TESTING)
     set_tests_properties(clipboard_prototype_mac_file_service PROPERTIES TIMEOUT 60)
   endif()
   option(CLIPBOARD_PROTOTYPE_DESKTOP_TESTS "Run filesystem mount and desktop clipboard integration tests" OFF)
-  if(CLIPBOARD_PROTOTYPE_DESKTOP_TESTS)
+  option(CLIPBOARD_PROTOTYPE_FUSE_TESTS "Run filesystem tests without accessing the desktop clipboard" OFF)
+  if(NOT APPLE)
+    add_test(NAME clipboard_local_rpc
+      COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test_local_rpc.py
+        --tool $<TARGET_FILE:deskflow-file-service>)
+    add_test(NAME clipboard_x11_formats
+      COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test_x11_formats.py
+        --tool $<TARGET_FILE:deskflow-clipboard-probe>
+        --service-tool $<TARGET_FILE:deskflow-file-service>)
+    set_tests_properties(clipboard_local_rpc clipboard_x11_formats PROPERTIES TIMEOUT 90)
+    set_tests_properties(clipboard_x11_formats PROPERTIES SKIP_RETURN_CODE 77)
+    if(BUILD_CLIPBOARD_FILES)
+      add_executable(clipboard-core-harness CoreClipboardHarness.cpp)
+      target_link_libraries(clipboard-core-harness PRIVATE clipboard_runtime)
+      add_dependencies(clipboard-core-harness deskflow-clipboard-probe deskflow-file-prototype)
+      add_test(NAME clipboard_core_runtime
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test_core_runtime.py
+          --harness $<TARGET_FILE:clipboard-core-harness>
+          --probe $<TARGET_FILE:deskflow-clipboard-probe>)
+      set_tests_properties(clipboard_core_runtime PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77)
+      add_test(NAME clipboard_core_session
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test_core_runtime.py
+          --harness $<TARGET_FILE:clipboard-core-harness>
+          --probe $<TARGET_FILE:deskflow-clipboard-probe>
+          --core $<TARGET_FILE:deskflow-core>)
+      set_tests_properties(clipboard_core_session PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77)
+    endif()
+  endif()
+  if(CLIPBOARD_PROTOTYPE_DESKTOP_TESTS OR CLIPBOARD_PROTOTYPE_FUSE_TESTS)
     add_test(
       NAME clipboard_prototype_mount
       COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test_prototype.py
@@ -102,6 +130,13 @@ if(BUILD_TESTING)
     )
     set_tests_properties(clipboard_prototype_mount PROPERTIES TIMEOUT 90)
     if(NOT APPLE)
+      add_test(NAME clipboard_rpc_mount
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test_rpc_mount.py
+          --file-tool $<TARGET_FILE:deskflow-file-prototype>
+          --service-tool $<TARGET_FILE:deskflow-file-service>)
+      set_tests_properties(clipboard_rpc_mount PROPERTIES TIMEOUT 90)
+    endif()
+    if(NOT APPLE AND CLIPBOARD_PROTOTYPE_DESKTOP_TESTS)
       add_test(
         NAME clipboard_prototype_x11
         COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test_prototype.py

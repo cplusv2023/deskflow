@@ -4,6 +4,7 @@
 
 本文件保留 Ubuntu `ea9190bcd` 的原始接入计划与验收门槛。**本轮已新增双机首版 core/GUI 实现并完成 Mac 编译，尚未完成 M5 双机验收**。
 现行协议和实现范围见 [内嵌首版指南](clipboard-core-v1.md)；下文“尚未实现”及 1.8 现状描述均属于合并前基线。
+Ubuntu 本轮构建、真实 core 会话、原生 Wayland 和生命周期验证见 [落地记录](clipboard-progress.md#ubuntu-core-v1-落地记录)；真实 Portal、旧端与 Mac 实机门槛仍未全部完成。
 M0 至 M2 的同机 FUSE／Files 结果不能计作现有 core 已接入新服务、旧端兼容或 Mac 实机互通通过。M3 与 M4 的组件工作、实际通过记录以 [Ubuntu 进度](clipboard-progress.md) 为准。
 
 目标保持为 [按需剪贴板架构](clipboard-design.md) 与 [跨端契约](clipboard-contract.md) 中的消费者读取时取数据，不使用完整文件预下载作为发布前提。当前 Ubuntu 开发假定 Mac 按接口可用；Finder 与真实 Mac 联调另外验收。

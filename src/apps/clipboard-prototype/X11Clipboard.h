@@ -80,7 +80,7 @@ int captureClipboardFiles(
 );
 int watchX11Clipboard(
     const std::function<void(const X11Announcement &)> &onAnnouncement, bool once, const std::string &logPath,
-    int timeoutMs = 5000, const std::string &origin = {}
+    int timeoutMs = 5000, const std::string &origin = {}, bool capture = false, bool skipInitial = false
 );
 int publishFormatFiles(
     const std::vector<std::pair<std::string, std::string>> &formats, const std::string &logPath, int timeoutMs,

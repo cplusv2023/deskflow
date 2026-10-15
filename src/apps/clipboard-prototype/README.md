@@ -2,6 +2,8 @@
 
 With `BUILD_CLIPBOARD_FILES=ON`, core owns the native clipboard and FUSE helpers automatically.
 See [the v1 guide](../../../docs/dev/clipboard-core-v1.md). The manual commands below remain component probes.
+Ubuntu supports X11 and GNOME Wayland with XWayland. Current runtime, native GTK4/Nautilus,
+and real core session results are in the [Ubuntu progress record](../../../docs/dev/clipboard-progress.md#ubuntu-core-v1-落地记录).
 
 # Clipboard and file prototype
 
@@ -258,5 +260,28 @@ and remove only the dedicated test directory after confirming it is unmounted.
 
 The simulated data has no complete backing file and no intermediate full-file
 cache. The user's chosen destination is the only full copy produced during native
-paste. Real peer TLS transport, runtime-driven offer replacement, native four-format
-Wayland acceptance and Deskflow session integration still require further work.
+paste. Loopback TLS, runtime-driven replacement, native GNOME formats and real core
+sessions now have separate tests; none of these component results imply real Mac interoperability.
+
+## Integrated Ubuntu regression
+
+Enable `BUILD_CLIPBOARD_FILES=ON`, `BUILD_TESTING=ON`, and
+`CLIPBOARD_PROTOTYPE_FUSE_TESTS=ON` in the main build. CTest includes the local RPC,
+format, RPC/FUSE, runtime harness and real core session suites. X11 tests start
+private Xvfb displays (`XVFB_BINARY` can point to an unpacked executable); they do
+not use the desktop clipboard. The harness executable is test-only and is not installed.
+The real core suite uses private certificates, settings, displays and temporary IPC paths.
+
+Explicit native acceptance uses system Python and GTK4 introspection and replaces
+the real clipboard. `test_gnome_clipboard.py --probe PATH` checks both directions
+against native Wayland windows. `test_core_runtime.py --harness PATH --probe PATH
+--native-gnome` adds actual loopback runtime/TLS/FUSE and Nautilus's normal paste action.
+It still supplies a synthetic main-session binding; the separate `--core PATH` mode
+exercises real Deskflow TLS/protocol/exporter binding on private X11 displays.
+
+Internal `watch --capture` captures all small representations on one watched
+connection, bounded to 16 MiB total, and emits base64 over stdout. It forbids `--log`.
+File lists contain references only. This handles native GNOME proxies without
+TIMESTAMP support without combining different clipboard generations. A client
+uses `--skip-initial` to observe the existing owner without announcing its old
+clipboard during startup; the server supplies the initial selection.

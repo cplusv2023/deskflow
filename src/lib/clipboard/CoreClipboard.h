@@ -2,6 +2,7 @@
 #pragma once
 #include "io/IStream.h"
 #include <memory>
+#include <mutex>
 namespace deskflow::clipboard {
 // A proxy owns this session; destroying it revokes the epoch and all mounts.
 class PeerLink
@@ -19,10 +20,29 @@ private:
 };
 #ifdef DESKFLOW_CLIPBOARD_FILES
 bool coreClipboardActive();
+// Serialize Portal reads/claims with the handoff to and from the new backend.
+// Keep the guard alive for the complete legacy operation, including cache updates.
+class LegacyClipboardGuard
+{
+public:
+  LegacyClipboardGuard();
+  explicit operator bool() const;
+
+private:
+  std::unique_lock<std::mutex> m_lock;
+};
 #else
 inline bool coreClipboardActive()
 {
   return false;
 }
+class LegacyClipboardGuard
+{
+public:
+  explicit operator bool() const
+  {
+    return true;
+  }
+};
 #endif
 } // namespace deskflow::clipboard

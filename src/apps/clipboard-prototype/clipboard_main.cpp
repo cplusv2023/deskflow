@@ -50,6 +50,9 @@ void printHelp()
                "formats or file contents. Matching local --origin is ignored to stop loops.\n"
                "--once waits at most --timeout-ms for one external offer; without --once\n"
                "watch continues until a signal and applies timeout to metadata requests.\n"
+               "Internal watch --capture emits one bounded snapshot over stdout (no --log),\n"
+               "with small formats as base64 and file references only. All representations\n"
+               "share one watched connection, including owners without TIMESTAMP support.\n"
                "The default origin identifies this probe for the current local user.\n"
                "capture-files emits a JSON array of absolute local file paths; it pins\n"
                "owner and timestamp, prefers GNOME copy, and rejects cut/remote URIs.\n"
@@ -106,6 +109,8 @@ int main(int argc, char **argv)
     std::vector<std::pair<std::string, std::string>> formats;
     int timeoutMs = 5000;
     bool once = false;
+    bool capture = false;
+    bool skipInitial = false;
     std::optional<deskflow::clipboard::prototype::X11Owner> expectedOwner;
     bool positionalOnly = false;
 
@@ -138,6 +143,10 @@ int main(int argc, char **argv)
         formats.push_back(parseFormat(optionValue(i, argc, argv)));
       } else if (!positionalOnly && command == "watch" && argument == "--once") {
         once = true;
+      } else if (!positionalOnly && command == "watch" && argument == "--capture") {
+        capture = true;
+      } else if (!positionalOnly && command == "watch" && argument == "--skip-initial") {
+        skipInitial = true;
       } else if (!positionalOnly && command == "read" && argument == "--target") {
         target = optionValue(i, argc, argv);
       } else if (!positionalOnly && command == "read" && argument == "--output") {
@@ -161,7 +170,9 @@ int main(int argc, char **argv)
       return deskflow::clipboard::prototype::publishFormatFiles(formats, logPath, timeoutMs, origin, expectedOwner);
     }
     if (command == "watch") {
-      return deskflow::clipboard::prototype::watchX11Clipboard({}, once, logPath, timeoutMs, origin);
+      return deskflow::clipboard::prototype::watchX11Clipboard(
+          {}, once, logPath, timeoutMs, origin, capture, skipInitial
+      );
     }
     if (command == "capture-files") {
       return deskflow::clipboard::prototype::captureClipboardFiles(timeoutMs, logPath, expectedOwner);

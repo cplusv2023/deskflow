@@ -624,14 +624,16 @@ const std::string &X11ClipboardError::status() const
   return m_status;
 }
 
-X11ReadResult readX11Format(const std::string &targetName, int timeoutMs, std::optional<X11Owner> expectedOwner)
+namespace {
+X11ReadResult readInSession(
+    XSession &session, const std::string &targetName, int timeoutMs, std::optional<X11Owner> expectedOwner,
+    bool sameConnection = false
+)
 {
   if (timeoutMs <= 0)
     throw std::invalid_argument("timeout must be positive");
-  XSession session;
   const auto deadline = Clock::now() + std::chrono::milliseconds(timeoutMs);
   const Atom selection = session.atom("CLIPBOARD");
-  session.watchSelection(selection);
   session.drain();
   const auto revision = session.revision();
   const Window owner = XGetSelectionOwner(session.display(), selection);
@@ -643,13 +645,24 @@ X11ReadResult readX11Format(const std::string &targetName, int timeoutMs, std::o
   bool incremental = false;
   std::uint32_t selectionTimestamp = expectedOwner ? expectedOwner->selectionTimestamp : 0;
   if (targetName == "TARGETS" || selectionTimestamp) {
-    const auto timestamp =
-        receive(session, selection, session.atom("TIMESTAMP"), property, owner, revision, deadline, incremental);
-    if (timestamp.type != XA_INTEGER || timestamp.format != 32 || timestamp.words.size() != 1)
-      fail("INVALID_SOURCE_RESPONSE", "clipboard did not supply a valid ownership timestamp");
-    if (selectionTimestamp && static_cast<std::uint32_t>(timestamp.words.front()) != selectionTimestamp)
-      fail("OWNER_CHANGED", "clipboard selection timestamp differs from the requested offer");
-    selectionTimestamp = static_cast<std::uint32_t>(timestamp.words.front());
+    try {
+      const auto timestamp =
+          receive(session, selection, session.atom("TIMESTAMP"), property, owner, revision, deadline, incremental);
+      if (timestamp.type != XA_INTEGER || timestamp.format != 32 || timestamp.words.size() != 1)
+        fail("INVALID_SOURCE_RESPONSE", "clipboard did not supply a valid ownership timestamp");
+      if (selectionTimestamp && static_cast<std::uint32_t>(timestamp.words.front()) != selectionTimestamp)
+        fail("OWNER_CHANGED", "clipboard selection timestamp differs from the requested offer");
+      selectionTimestamp = static_cast<std::uint32_t>(timestamp.words.front());
+    } catch (const X11ClipboardError &error) {
+      // Mutter's native Wayland proxy may reject TIMESTAMP. A continuously
+      // watched connection still detects same-window re-acquisition. Never
+      // silently weaken a timestamp guard supplied to an independent reader.
+      if (error.status() != "UNSUPPORTED_TARGET" || (expectedOwner && !sameConnection))
+        throw;
+      if (!selectionTimestamp)
+        selectionTimestamp = static_cast<std::uint32_t>(session.serverTime());
+      checkOwner(session, selection, owner, revision);
+    }
   }
   const auto value =
       receive(session, selection, session.atom(targetName.c_str()), property, owner, revision, deadline, incremental);
@@ -671,20 +684,33 @@ X11ReadResult readX11Format(const std::string &targetName, int timeoutMs, std::o
   }
   return result;
 }
+} // namespace
+
+X11ReadResult readX11Format(const std::string &targetName, int timeoutMs, std::optional<X11Owner> expectedOwner)
+{
+  XSession session;
+  session.watchSelection(session.atom("CLIPBOARD"));
+  return readInSession(session, targetName, timeoutMs, expectedOwner);
+}
 
 std::vector<std::string> readClipboardFiles(int timeoutMs, std::optional<X11Owner> expectedOwner)
 {
   if (timeoutMs <= 0)
     throw std::invalid_argument("timeout must be positive");
   const auto deadline = Clock::now() + std::chrono::milliseconds(timeoutMs);
-  const auto available = readX11Format("TARGETS", timeoutMs, expectedOwner);
+  XSession session;
+  const auto selection = session.atom("CLIPBOARD");
+  session.watchSelection(selection);
+  const auto revision = session.revision();
+  const auto available = readInSession(session, "TARGETS", timeoutMs, expectedOwner);
   for (const auto *target : {"x-special/gnome-copied-files", "application/x-gnome-copied-files", "text/uri-list"}) {
     if (std::find(available.targets.begin(), available.targets.end(), target) == available.targets.end())
       continue;
     const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - Clock::now()).count();
     if (remaining <= 0)
       fail("TIMEOUT", "clipboard file-list capture timed out");
-    const auto result = readX11Format(target, static_cast<int>(remaining), available.owner);
+    const auto result = readInSession(session, target, static_cast<int>(remaining), available.owner, true);
+    checkOwner(session, selection, available.owner.window, revision);
     return decodeFileList(result.bytes, std::string_view(target) != "text/uri-list");
   }
   fail("UNSUPPORTED_TARGET", "clipboard does not contain a supported file list");
@@ -750,10 +776,12 @@ int publishX11Offer(const X11ClipboardOffer &offer, const std::string &logPath, 
     if (units <= 64)
       fail("UNSUPPORTED", "X11 server request limit is too small");
     const auto directBytes = std::min(kDirectBytes, static_cast<std::size_t>(units - 64) * 4);
-    // Read TIMESTAMP without a server grab (the current owner must answer).
-    if (offer.expectedOwner && offer.expectedOwner->window != 0)
-      readX11Format("TIMESTAMP", timeoutMs, offer.expectedOwner);
-    const Time acquired = session.serverTime();
+    // The server rejects SetSelectionOwner with a time older than its last
+    // ownership change, including same-window changes by the Wayland proxy.
+    // Unlike a TIMESTAMP conversion, this does not depend on owner support.
+    const Time acquired = offer.expectedOwner && offer.expectedOwner->selectionTimestamp
+                              ? offer.expectedOwner->selectionTimestamp
+                              : session.serverTime();
     XGrabServer(display);
     XSync(display, False);
     session.drain();
@@ -1051,15 +1079,76 @@ int readClipboard(
   }
 }
 
+namespace {
+std::string base64(std::string_view bytes)
+{
+  constexpr char alphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  std::string result;
+  result.reserve((bytes.size() + 2) / 3 * 4);
+  for (std::size_t i = 0; i < bytes.size(); i += 3) {
+    const auto first = static_cast<unsigned char>(bytes[i]);
+    const auto second = i + 1 < bytes.size() ? static_cast<unsigned char>(bytes[i + 1]) : 0;
+    const auto third = i + 2 < bytes.size() ? static_cast<unsigned char>(bytes[i + 2]) : 0;
+    result += alphabet[first >> 2];
+    result += alphabet[((first & 3) << 4) | (second >> 4)];
+    result += i + 1 < bytes.size() ? alphabet[((second & 15) << 2) | (third >> 6)] : '=';
+    result += i + 2 < bytes.size() ? alphabet[third & 63] : '=';
+  }
+  return result;
+}
+
+std::string captureFields(XSession &session, const X11ReadResult &available, int timeoutMs)
+{
+  const auto deadline = Clock::now() + std::chrono::milliseconds(timeoutMs);
+  const auto has = [&](const char *target) {
+    return std::find(available.targets.begin(), available.targets.end(), target) != available.targets.end();
+  };
+  const auto read = [&](const char *target) {
+    const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - Clock::now()).count();
+    if (remaining <= 0)
+      fail("TIMEOUT", "clipboard capture deadline exceeded");
+    return readInSession(session, target, static_cast<int>(remaining), available.owner, true).bytes;
+  };
+  for (const char *target : {"x-special/gnome-copied-files", "application/x-gnome-copied-files", "text/uri-list"}) {
+    if (has(target))
+      return "\"files\":" + stringArray(decodeFileList(read(target), std::string_view(target) != "text/uri-list"));
+  }
+  const char *text = has("UTF8_STRING")                ? "UTF8_STRING"
+                     : has("text/plain;charset=utf-8") ? "text/plain;charset=utf-8"
+                                                       : "text/plain";
+  const std::pair<const char *, const char *> formats[] = {
+      {text, "text/plain"}, {"text/html", "text/html"}, {"image/png", "image/png"}
+  };
+  std::string result = "\"formats\":[";
+  std::size_t total = 0;
+  bool first = true;
+  for (const auto &[target, mime] : formats) {
+    if (!has(target))
+      continue;
+    const auto bytes = read(target);
+    if (bytes.size() > kX11MaxFormatBytes - total)
+      fail("TOO_LARGE", "clipboard representations exceed 16 MiB");
+    total += bytes.size();
+    if (!first)
+      result += ',';
+    first = false;
+    result += "{\"mime\":" + quote(mime) + ",\"bytesBase64\":" + quote(base64(bytes)) + '}';
+  }
+  return result + ']';
+}
+} // namespace
+
 int watchX11Clipboard(
     const std::function<void(const X11Announcement &)> &onAnnouncement, bool once, const std::string &logPath,
-    int timeoutMs, const std::string &requestedOrigin
+    int timeoutMs, const std::string &requestedOrigin, bool capture, bool skipInitial
 )
 {
   Logger log(logPath, std::cout);
   try {
     if (timeoutMs <= 0)
       throw std::invalid_argument("timeout must be positive");
+    if (capture && !logPath.empty())
+      throw std::invalid_argument("watch --capture uses a private stdout pipe and does not support --log");
     SignalGuard signals;
     XSession session;
     const Atom clipboard = session.atom("CLIPBOARD");
@@ -1068,33 +1157,49 @@ int watchX11Clipboard(
     log.write("ready", "\"role\":\"watch\",\"display\":" + quote(DisplayString(session.display())));
     const auto deadline = Clock::now() + std::chrono::milliseconds(timeoutMs);
     bool inspect = true;
+    bool initialized = false;
     while (!g_stop) {
       if (inspect) {
         inspect = false;
         XSync(session.display(), False);
         session.drain();
+        // A newly connected client observes its old selection for publication
+        // guards but leaves the initial choice to the server. Otherwise an old
+        // bootstrap copy can override a new copy just after reconnect.
+        Time initialTime = session.selectionTimestamp();
+        if (!initialized && initialTime == 0)
+          initialTime = session.serverTime();
+        XSync(session.display(), False);
+        session.drain();
         const auto revision = session.revision();
         const Window owner = XGetSelectionOwner(session.display(), clipboard);
-        const X11Owner identity{owner, static_cast<std::uint32_t>(session.selectionTimestamp())};
+        const X11Owner identity{
+            owner, static_cast<std::uint32_t>(session.selectionTimestamp() ? session.selectionTimestamp() : initialTime)
+        };
         log.write(
             "owner_changed", "\"owner\":" + std::to_string(owner) +
                                  ",\"selectionTimestamp\":" + std::to_string(identity.selectionTimestamp)
         );
-        if (owner != None) {
+        if (owner != None && !(skipInitial && !initialized)) {
           try {
             const auto marker = readProperty(session, owner, session.atom(kOriginProperty), false, 256);
             checkOwner(session, clipboard, owner, revision);
             if (marker.format == 8 && marker.bytes == origin) {
               log.write("self_offer_ignored", "\"owner\":" + std::to_string(owner));
             } else {
-              const auto targetList = readX11Format("TARGETS", timeoutMs, identity);
+              // Keep metadata and every representation on this continuously
+              // watched connection; never assemble formats from different offers.
+              const auto targetList = readInSession(session, "TARGETS", timeoutMs, std::nullopt, true);
               checkOwner(session, clipboard, owner, revision);
               X11Announcement announcement{targetList.owner, targetList.targets};
-              log.write(
-                  "clipboard_offer", "\"owner\":" + std::to_string(owner) + ",\"selectionTimestamp\":" +
-                                         std::to_string(announcement.owner.selectionTimestamp) +
-                                         ",\"targets\":" + stringArray(announcement.targets)
-              );
+              auto fields = "\"owner\":" + std::to_string(owner) +
+                            ",\"selectionTimestamp\":" + std::to_string(announcement.owner.selectionTimestamp) +
+                            ",\"targets\":" + stringArray(announcement.targets);
+              if (capture) {
+                fields += ',' + captureFields(session, targetList, timeoutMs);
+                checkOwner(session, clipboard, owner, revision);
+              }
+              log.write(capture ? "clipboard_snapshot" : "clipboard_offer", fields);
               if (onAnnouncement)
                 onAnnouncement(announcement);
               if (once)
@@ -1107,6 +1212,10 @@ int watchX11Clipboard(
             if (error.status() == "OWNER_CHANGED")
               inspect = true;
           }
+        }
+        if (!initialized && !inspect) {
+          log.write("watch_initialized");
+          initialized = true;
         }
       }
       if (once && Clock::now() >= deadline)
