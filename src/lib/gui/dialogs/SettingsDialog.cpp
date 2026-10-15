@@ -32,16 +32,7 @@ SettingsDialog::SettingsDialog(QWidget *parent, const ServerConfig &serverConfig
 {
 
   ui->setupUi(this);
-  m_fileClipboard = new QCheckBox(tr("Share files with macOS / Ubuntu (experimental)"), this);
-  m_fileClipboard->setEnabled(Settings::isWritable());
-  m_fileClipboard->setToolTip(
-      tr("Requires this build on both computers, TLS with client certificate verification, and macFUSE FSKit / FUSE3. "
-         "Ubuntu X11 or GNOME Wayland with XWayland. Restart the connection after changing this setting.")
-  );
-#ifndef DESKFLOW_CLIPBOARD_FILES
-  m_fileClipboard->setEnabled(false);
-  m_fileClipboard->setToolTip(tr("This build does not include file clipboard support."));
-#endif
+  m_fileClipboard = new QCheckBox(this);
   layout()->addWidget(m_fileClipboard);
   layout()->addWidget(m_buttonBox);
   ui->tabWidget->setCurrentIndex(0);
@@ -212,6 +203,14 @@ void SettingsDialog::resetAllSettings()
 
 void SettingsDialog::updateText()
 {
+  m_fileClipboard->setText(tr("Share clipboard with macOS / Ubuntu (files, text and images)"));
+  m_fileClipboard->setToolTip(
+      tr("Requires this build on both computers, TLS with client certificate verification, and macFUSE FSKit / FUSE3. "
+         "Ubuntu X11 or GNOME Wayland with XWayland. Restart the connection after changing this setting.")
+  );
+#ifndef DESKFLOW_CLIPBOARD_FILES
+  m_fileClipboard->setToolTip(tr("This build does not include file clipboard support."));
+#endif
   const auto logLevels = LogLevel::logLevelNames().count();
   const QStringList toolTips = {tr("Required messages"),        tr("Non-fatal errors"), tr("General warnings"),
                                 tr("General events [Default]"), tr("Debug entries"),    tr("Verbose debug output")};
@@ -233,6 +232,18 @@ void SettingsDialog::updateText()
 void SettingsDialog::accept()
 {
   Settings::setValue(Settings::Core::FileClipboard, m_fileClipboard->isChecked());
+#ifdef DESKFLOW_CLIPBOARD_FILES
+  // The new service still needs the core clipboard capability for negotiation.
+  if (m_fileClipboard->isChecked()) {
+    if (!Settings::value(Settings::Server::EnableClipboard).toBool()) {
+      Settings::setValue(Settings::Server::XdpRestoreToken, QString());
+      Settings::setValue(Settings::Server::XdpClipboardRetried, false);
+    }
+    Settings::setValue(Settings::Server::EnableClipboard, true);
+    if (Settings::value(Settings::Server::ClipboardSize).toUInt() == 0)
+      Settings::setValue(Settings::Server::ClipboardSize, Settings::defaultValue(Settings::Server::ClipboardSize));
+  }
+#endif
   Settings::setValue(Settings::Core::Port, ui->sbPort->value());
   Settings::setValue(Settings::Core::Interface, ui->comboInterface->currentData());
   Settings::setValue(Settings::Log::Level, ui->comboLogLevel->currentData());
@@ -379,6 +390,11 @@ void SettingsDialog::updateKeyLengthOnFile(const QString &path)
 void SettingsDialog::updateControls()
 {
   const bool writable = Settings::isWritable();
+#ifdef DESKFLOW_CLIPBOARD_FILES
+  m_fileClipboard->setEnabled(writable);
+#else
+  m_fileClipboard->setEnabled(false);
+#endif
   const bool serviceChecked = ui->groupService->isChecked();
   const bool logToFile = ui->groupLogToFile->isChecked();
 
@@ -435,6 +451,12 @@ bool SettingsDialog::isModified() const
 {
   const auto processMode = Settings::value(Settings::Core::ProcessMode).value<Settings::ProcessMode>();
   const bool ignoreInterface = !m_interfaceSetOnLoad && (ui->comboInterface->currentIndex() == 0);
+
+#ifdef DESKFLOW_CLIPBOARD_FILES
+  if (m_fileClipboard->isChecked() && (!Settings::value(Settings::Server::EnableClipboard).toBool() ||
+                                       Settings::value(Settings::Server::ClipboardSize).toUInt() == 0))
+    return true;
+#endif
 
   bool modified =
       (m_fileClipboard->isChecked() != Settings::value(Settings::Core::FileClipboard).toBool()) ||

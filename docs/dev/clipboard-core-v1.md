@@ -1,6 +1,6 @@
 # 内嵌剪贴板首版：构建、使用与协议
 
-更新：2026-10-15。`macos` 已合入 Ubuntu 最新 `6a657c5e3`，并补齐 Mac 初始化、旧剪贴板交接及 App 打包。
+更新：2026-10-16。`macos` 已合入 Ubuntu 最新 `6a657c5e3`，并补齐 Mac 初始化、旧剪贴板交接及 App 打包。
 
 这是直接内嵌 Deskflow core/GUI 的实验首版，不需要独立 SSH 工具或手动启动服务。
 Mac 组已生成 Release 试用分发包，仅做编译、依赖和签名检查。本轮 Ubuntu 已增加本地 TLS/runtime、真实 core 会话和原生
@@ -47,7 +47,9 @@ Mac 分发构建和安装说明见 [Release 记录](clipboard-tests/2026-10-15-m
 1. Mac 安装 macFUSE 并启用其 FSKit 模块；Ubuntu 使用 X11 或 GNOME Wayland 会话、可用的 `DISPLAY` 和 FUSE3。
 2. 两端使用本版 Deskflow，保留“共享剪贴板”总开关；启用 TLS，server 要求并验证客户端证书。
    按原 Deskflow 流程信任双方指纹。未满足双向认证时，文件扩展不可用，主连接仍可正常工作。
-3. 两端设置中勾选 **Share files with macOS / Ubuntu (experimental)**，重启连接。
+3. 两端设置中勾选 **Share clipboard with macOS / Ubuntu (files, text and images)**，重启连接。
+   新版 GUI 启用后隐藏服务器配置中的旧剪贴板开关和大小限制，并在保存设置时保持 core 协商所需开关有效。
+   客户端配置中的“鼠标滚轮”支持水平、垂直独立反转，不修改系统滚动偏好。
    对应持久配置为 `core/fileClipboard=true`。设置变更以重新连接生效。
 4. 在 GUI 状态栏查看 `Clipboard: Ready…`，在文件管理器复制文件，到另一端正常粘贴。
    切屏不是传输触发条件。保持 Deskflow 连接和源文件不变直到应用复制完成。

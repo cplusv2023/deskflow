@@ -182,6 +182,23 @@ bool isModifier(uint8_t virtualKey)
   return (modifiers.find(virtualKey) != modifiers.end());
 }
 
+// Input source IDs are CFStrings. Own their contents: TIS may return equal IDs
+// at different addresses on successive queries. Caller holds g_tisMutex.
+std::string inputSourceID(TISInputSourceRef source)
+{
+  if (!source)
+    return {};
+  auto id = static_cast<CFStringRef>(TISGetInputSourceProperty(source, kTISPropertyInputSourceID));
+  if (!id)
+    return {};
+  const auto capacity = CFStringGetMaximumSizeForEncoding(CFStringGetLength(id), kCFStringEncodingUTF8) + 1;
+  std::string value(static_cast<size_t>(capacity), '\0');
+  if (!CFStringGetCString(id, value.data(), capacity, kCFStringEncodingUTF8))
+    return {};
+  value.resize(value.find('\0'));
+  return value;
+}
+
 AutoTISInputSourceRef copyKeyboardLayoutForKeyTranslation()
 {
   std::lock_guard<std::mutex> lock(g_tisMutex);
@@ -472,21 +489,25 @@ KeyModifierMask OSXKeyState::pollActiveModifiers() const
 
 int32_t OSXKeyState::pollActiveGroup() const
 {
-  AutoTISInputSourceRef keyboardLayout(nullptr, CFRelease);
-  CFDataRef id = nullptr;
+  // Match the layout used for key translation, including the IME fallback.
+  auto keyboardLayout = copyKeyboardLayoutForKeyTranslation();
+  std::string id;
   {
     std::lock_guard<std::mutex> lock(g_tisMutex);
-    keyboardLayout = AutoTISInputSourceRef(TISCopyCurrentKeyboardLayoutInputSource(), CFRelease);
-    if (keyboardLayout)
-      id = (CFDataRef)TISGetInputSourceProperty(keyboardLayout.get(), kTISPropertyInputSourceID);
+    id = inputSourceID(keyboardLayout.get());
   }
 
-  GroupMap::const_iterator i = m_groupMap.find(id);
+  const auto i = m_groupMap.find(id);
   if (i != m_groupMap.end()) {
+    m_warnedMissingGroup = false;
     return i->second;
   }
 
-  LOG_WARN("can't get the active group, use the first group instead");
+  // An unavailable layout must not flood the GUI log on every keystroke.
+  if (!m_warnedMissingGroup) {
+    LOG_WARN("can't get the active group (%s), use the first group instead", id.c_str());
+    m_warnedMissingGroup = true;
+  }
 
   return 0;
 }
@@ -514,12 +535,10 @@ void OSXKeyState::getKeyMap(deskflow::KeyMap &keyMap)
     numGroups = CFArrayGetCount(m_groups.get());
     for (int32_t g = 0; g < numGroups; ++g) {
       TISInputSourceRef keyboardLayout = (TISInputSourceRef)CFArrayGetValueAtIndex(m_groups.get(), g);
-      CFDataRef id = nullptr;
-      {
-        std::lock_guard<std::mutex> lock(g_tisMutex);
-        id = (CFDataRef)TISGetInputSourceProperty(keyboardLayout, kTISPropertyInputSourceID);
-      }
-      m_groupMap[id] = g;
+      std::lock_guard<std::mutex> lock(g_tisMutex);
+      const auto id = inputSourceID(keyboardLayout);
+      if (!id.empty())
+        m_groupMap[id] = g;
     }
   }
 

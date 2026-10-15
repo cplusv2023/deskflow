@@ -138,8 +138,20 @@ p, li { white-space: pre-wrap; }
 <context>
     <name>ClientConfigDialog</name>
     <message>
+        <source>Mouse wheel</source>
+        <translation>鼠标滚轮</translation>
+    </message>
+    <message>
+        <source>Reverse direction</source>
+        <translation>反转方向</translation>
+    </message>
+    <message>
+        <source>Reverse horizontal and vertical scrolling independently for input received from the server. The system scrolling preference is unchanged.</source>
+        <translation>分别反转服务器传入的水平和垂直滚动方向，不修改系统滚动偏好设置。</translation>
+    </message>
+    <message>
         <source>Client Configuration</source>
-        <translation type="unfinished">客户端配置</translation>
+        <translation>客户端配置</translation>
     </message>
     <message>
         <source>Use server&apos;s keyboard language on this computer</source>
@@ -147,23 +159,23 @@ p, li { white-space: pre-wrap; }
     </message>
     <message>
         <source>Scroll Modifiers</source>
-        <translation type="unfinished">滚动修饰符</translation>
+        <translation type="obsolete">滚动修饰符</translation>
     </message>
     <message>
         <source>Invert</source>
-        <translation type="unfinished">倒置</translation>
+        <translation type="obsolete">倒置</translation>
     </message>
     <message>
         <source>Horizontal Scroll</source>
-        <translation type="unfinished">水平滚动</translation>
+        <translation>水平滚动</translation>
     </message>
     <message>
         <source>Vertical Scroll</source>
-        <translation type="unfinished">垂直滚动</translation>
+        <translation>垂直滚动</translation>
     </message>
     <message>
         <source>Scale</source>
-        <translation type="unfinished">规模</translation>
+        <translation>倍率</translation>
     </message>
     <message>
         <source>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Allow the client to slow the rate it attempts to reconnect to the server when connections attempts are failing. The delay between connection attempts will  start at 1 second intervals and can be a maxium of 5 minutes between connection attempts.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</source>
@@ -923,6 +935,10 @@ Additionally, check you are able to %1 the server config file: %2</source>
         <source>Super</source>
         <translation type="unfinished">Super</translation>
     </message>
+    <message>
+        <source>Clipboard: %1</source>
+        <translation>剪贴板：%1</translation>
+    </message>
 </context>
 <context>
     <name>SearchWidget</name>
@@ -945,6 +961,10 @@ Additionally, check you are able to %1 the server config file: %2</source>
 </context>
 <context>
     <name>ServerConfigDialog</name>
+    <message>
+        <source>Clipboard sharing is managed in Settings.</source>
+        <translation>请在“设置”中管理剪贴板共享。</translation>
+    </message>
     <message>
         <source>Server Configuration</source>
         <translation>服务器配置</translation>
@@ -1102,6 +1122,10 @@ Enabling this setting will disable the server config GUI.</source>
 <context>
     <name>SettingsDialog</name>
     <message>
+        <source>Share clipboard with macOS / Ubuntu (files, text and images)</source>
+        <translation>与 macOS / Ubuntu 共享剪贴板（文件、文本和图像）</translation>
+    </message>
+    <message>
         <source>Preferences</source>
         <translation>首选项</translation>
     </message>
@@ -1204,6 +1228,14 @@ Enabling this setting will disable the server config GUI.</source>
     <message>
         <source>&lt;p&gt;Are you sure you want to clear all settings and restart %1?&lt;/p&gt; &lt;p&gt;This action cannot be undone.&lt;/p&gt;</source>
         <translation type="unfinished">&lt;p&gt;您确定要清除所有设置并重新启动 %1 吗？&lt;/p&gt; &lt;p&gt;此操作无法撤销。&lt;/p&gt;</translation>
+    </message>
+    <message>
+        <source>Requires this build on both computers, TLS with client certificate verification, and macFUSE FSKit / FUSE3. Ubuntu X11 or GNOME Wayland with XWayland. Restart the connection after changing this setting.</source>
+        <translation>两端均需使用此版本，开启 TLS 和客户端证书验证，并安装 macFUSE FSKit / FUSE3。Ubuntu 支持 X11 或 GNOME Wayland 搭配 XWayland。更改后请重新连接。</translation>
+    </message>
+    <message>
+        <source>This build does not include file clipboard support.</source>
+        <translation>此构建未包含文件剪贴板支持。</translation>
     </message>
     <message>
         <source>Required messages</source>
@@ -1391,6 +1423,13 @@ Enabling this setting will disable the server config GUI.</source>
     <message>
         <source>Encryption Disabled</source>
         <translation>加密已禁用</translation>
+    </message>
+</context>
+<context>
+    <name>deskflow::gui::CoreProcess</name>
+    <message>
+        <source>Disconnected</source>
+        <translation>已断开</translation>
     </message>
 </context>
 <context>

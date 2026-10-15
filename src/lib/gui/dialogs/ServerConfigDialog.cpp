@@ -37,6 +37,13 @@ ServerConfigDialog::ServerConfigDialog(QWidget *parent, ServerConfig &config)
 {
   ui->setupUi(this);
   ui->tabWidget->setCurrentIndex(0);
+#ifdef DESKFLOW_CLIPBOARD_FILES
+  if (Settings::value(Settings::Core::FileClipboard).toBool()) {
+    ui->cbEnableClipboard->hide();
+    ui->sbClipboardSizeLimit->hide();
+    ui->label_7->setText(tr("Clipboard sharing is managed in Settings."));
+  }
+#endif
   layout()->addWidget(m_buttonBox);
 
   loadFromConfig();
@@ -70,6 +77,13 @@ void ServerConfigDialog::save()
       return;
     }
   }
+#ifdef DESKFLOW_CLIPBOARD_FILES
+  if (Settings::value(Settings::Core::FileClipboard).toBool()) {
+    m_enableClipboard = true;
+    if (m_clipboardSize == 0)
+      m_clipboardSize = Settings::defaultValue(Settings::Server::ClipboardSize).toUInt();
+  }
+#endif
   // now that the dialog has been accepted, copy the new server config to the
   // original one, which is a reference to the one in MainWindow.
   setOriginalServerConfig(serverConfig());
