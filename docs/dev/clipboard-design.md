@@ -6,7 +6,7 @@
 
 本阶段由当前 Ubuntu 机器负责平台原型测试，**假定 Mac 端能够按约定接口提供和接收数据**。Mac 平台开发、Finder 行为与安装部署不作为当前阶段的前置任务；该假设不等于 Mac 与 Ubuntu 已经联调通过。
 
-实际环境、实现状态、验收用例和后续记录见 [Ubuntu 原型进度](clipboard-progress.md)。Ubuntu 的模拟源、只读 FUSE 和文件剪贴板探针已完成 M0 至 M2 原型验证；以下 Broker、正式协议和会话整合仍为待实现设计。
+实际环境、实现状态、验收用例和后续记录见 [Ubuntu 原型进度](clipboard-progress.md)。M0 至 M2 已验证；M3/M4 新增四格式 X11 后端、LocalFileSource、Broker 状态组件和同用户 RPC/FUSE 链路。它们尚未组成统一运行时，正式协议与 core 会话整合仍为待实现设计，见 [M5 接入计划](clipboard-m5-integration.md)。
 
 两端需要确认的读取结果、租约、版本错误和共享样本见 [跨端接口契约 v1 草案](clipboard-contract.md)。
 
@@ -82,7 +82,7 @@ ClipboardTransport      │ 引用与租约
 | ClipboardTransport | 编解码、能力协商、请求响应关联、身份验证和数据连接绑定。 |
 | LegacyClipboardAdapter | 将旧 CCLP/DCLP 接入 Broker；避免新旧路径同时写入同一系统剪贴板。 |
 
-正式模块拟放在 `src/lib/clipboard/` 与 `src/lib/platform/clipboard/`。独立 Ubuntu 原型已经放在 [src/apps/clipboard-prototype](../../src/apps/clipboard-prototype/README.md)，提供 `deskflow-file-prototype` 与 `deskflow-clipboard-probe`；主工程通过默认关闭的 `BUILD_CLIPBOARD_PROTOTYPE` 选择构建，后续再整合到核心进程。
+纯 C++20 状态与文件模块已放在 `src/lib/clipboard/`，平台探针仍在 [src/apps/clipboard-prototype](../../src/apps/clipboard-prototype/README.md)。原型提供 `deskflow-file-prototype`、`deskflow-clipboard-probe` 与 `deskflow-file-service`；主工程通过默认关闭的 `BUILD_CLIPBOARD_PROTOTYPE` 选择构建，尚未接到核心进程生命周期。
 
 ## 数据与生命周期
 

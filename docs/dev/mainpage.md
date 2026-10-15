@@ -57,3 +57,5 @@ Check out our [Building guide](build.md) or our general @ref contributing_guide 
 For the proposed clipboard extension, see the [on-demand clipboard goals and architecture](clipboard-design.md) and [Ubuntu prototype progress](clipboard-progress.md) (Chinese).
 
 Cross-platform semantics and shared fixtures are described in the [clipboard interface contract draft](clipboard-contract.md) (Chinese).
+
+The next core integration steps and their acceptance gates are tracked in the [clipboard M5 integration plan](clipboard-m5-integration.md) (Chinese).

@@ -65,12 +65,43 @@ void TraceLog::event(std::string_view operation, std::string_view fields)
   const auto unixMs =
       std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch())
           .count();
-  m_stream << "{\"operation\":" << jsonQuote(operation) << ",\"offerId\":" << jsonQuote(FakeRemoteSource::offerId)
+  m_stream << "{\"operation\":" << jsonQuote(operation) << ",\"offerId\":" << jsonQuote(m_offerId)
            << ",\"elapsedUs\":" << elapsed << ",\"unixMs\":" << unixMs;
   if (!fields.empty())
     m_stream << ',' << fields;
   m_stream << "}\n";
   m_stream.flush();
+}
+
+void TraceLog::setOfferId(std::string offerId)
+{
+  std::lock_guard lock(m_mutex);
+  m_offerId = std::move(offerId);
+}
+
+const FileEntry *FileTreeSource::findPath(std::string_view path) const
+{
+  const auto &all = entries();
+  const auto found = std::find_if(all.begin(), all.end(), [&](const auto &entry) { return entry.path == path; });
+  return found == all.end() ? nullptr : &*found;
+}
+
+const FileEntry *FileTreeSource::findId(std::string_view id) const
+{
+  const auto &all = entries();
+  const auto found = std::find_if(all.begin(), all.end(), [&](const auto &entry) { return entry.id == id; });
+  return found == all.end() ? nullptr : &*found;
+}
+
+std::vector<const FileEntry *> FileTreeSource::children(std::string_view directory) const
+{
+  std::vector<const FileEntry *> result;
+  const std::string prefix = directory == "/" ? "/" : std::string(directory) + '/';
+  for (const auto &entry : entries())
+    if (entry.path.size() > prefix.size() && entry.path.starts_with(prefix) &&
+        entry.path.find('/', prefix.size()) == std::string::npos)
+      result.push_back(&entry);
+  return result;
 }
 
 FakeRemoteSource::FakeRemoteSource(
