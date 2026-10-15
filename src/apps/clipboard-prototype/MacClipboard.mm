@@ -492,7 +492,8 @@ int publishMacFiles(const std::vector<std::string> &paths, const MacClipboardOpt
     if (paths.empty() || paths.size() > kMaxItems) {
       throw std::invalid_argument("publish requires 1 to 1024 absolute file paths");
     }
-    NSMutableArray<NSURL *> *urls = [NSMutableArray arrayWithCapacity:paths.size()];
+    NSString *origin = publisherOrigin(options);
+    NSMutableArray<NSPasteboardItem *> *items = [NSMutableArray arrayWithCapacity:paths.size()];
     std::size_t totalBytes = 0;
     for (const auto &path : paths) {
       NSString *native = nativeString(path);
@@ -505,21 +506,33 @@ int publishMacFiles(const std::vector<std::string> &paths, const MacClipboardOpt
       if (totalBytes > kMaxFileListBytes) {
         throw std::invalid_argument("file URL metadata exceeds 64 KiB");
       }
-      [urls addObject:url];
+      NSPasteboardItem *item = [[NSPasteboardItem alloc] init];
+      if (![item setString:url.absoluteString forType:NSPasteboardTypeFileURL] || ![item setString:origin
+                                                                                           forType:kOriginType]) {
+        throw std::runtime_error("cannot prepare file URL and origin metadata");
+      }
+      [items addObject:item];
     }
     Logger logger(options.logPath, std::cout);
     NSPasteboard *board = pasteboard(options);
-    NSString *origin = publisherOrigin(options);
     if (options.expectedChangeCount && board.changeCount != *options.expectedChangeCount)
       throw std::runtime_error("OWNER_CHANGED: newer local copy superseded publication");
     [board prepareForNewContentsWithOptions:NSPasteboardContentsCurrentHostOnly];
-    if (![board writeObjects:urls]) {
+    // Publish complete items in one write. Mixing writeObjects with legacy
+    // board-level addTypes/setString can replace the NSURL representations,
+    // leaving only the origin marker and disabling Finder's Paste command.
+    if (![board writeObjects:items]) {
       throw std::runtime_error("AppKit rejected file URL publication");
     }
-    // addTypes changes only the first item's advertised types; all NSURL items survive.
-    [board addTypes:@[ kOriginType ] owner:nil];
-    if (![board setString:origin forType:kOriginType]) {
-      throw std::runtime_error("AppKit rejected origin marker");
+    NSArray<NSPasteboardItem *> *published = board.pasteboardItems;
+    if (published.count != items.count) {
+      throw std::runtime_error("file URL publication lost pasteboard items");
+    }
+    for (NSPasteboardItem *item in published) {
+      if (![item.types containsObject:NSPasteboardTypeFileURL] ||
+          ![[item stringForType:kOriginType] isEqualToString:origin]) {
+        throw std::runtime_error("file URL publication lost its representation or origin");
+      }
     }
     return holdPublication(board, origin, options, logger);
   }
@@ -594,6 +607,15 @@ int readMacClipboard(
           NSURL *url = [NSURL URLWithString:value];
           if (!url.isFileURL) {
             throw std::runtime_error("invalid file URL representation");
+          }
+          // Finder can supply file:///.file/id=... instead of a pathname.
+          // Resolve the reference while still in AppKit; passing its pseudo-path
+          // to the POSIX source makes O_NOFOLLOW report SOURCE_CHANGED.
+          if (url.isFileReferenceURL) {
+            url = url.filePathURL;
+            if (!url) {
+              throw std::runtime_error("SOURCE_MISSING: cannot resolve file reference URL");
+            }
           }
           [list appendFormat:@"%@\r\n", url.absoluteString];
           if ([list lengthOfBytesUsingEncoding:NSUTF8StringEncoding] > kMaxFileListBytes) {

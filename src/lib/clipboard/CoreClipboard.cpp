@@ -633,10 +633,14 @@ private:
       send({{"intent", std::to_string(m_localToken)}, {}});
     // Cancel obsolete native reads before starting the next snapshot.
     if (m_reader) {
-      m_reader->disconnect(this);
-      m_reader->kill();
-      m_reader->deleteLater();
+      auto *reader = m_reader.data();
       m_reader = nullptr;
+      // kill() is asynchronous. Keep the finished handler and QObject alive
+      // until the child is reaped; its old token already suppresses callbacks.
+      // A cancellation can also arrive before QProcess has obtained a PID.
+      if (reader->state() == QProcess::Starting)
+        connect(reader, &QProcess::started, reader, [reader] { reader->kill(); });
+      reader->kill();
     }
     m_capture.clear();
     m_captureTargets.clear();
@@ -713,6 +717,18 @@ private:
       }
       p->deleteLater();
     });
+    connect(p, &QProcess::errorOccurred, this, [this, p, token, skipped](QProcess::ProcessError error) {
+      if (error != QProcess::FailedToStart)
+        return;
+      if (m_reader == p)
+        m_reader = nullptr;
+      if (!m_stopped && token == m_localToken) {
+        status("Native clipboard reader could not start");
+        if (skipped)
+          skipped();
+      }
+      p->deleteLater();
+    });
     QTimer::singleShot(10000, p, [p] {
       if (p->state() != QProcess::NotRunning)
         p->kill();
@@ -749,9 +765,13 @@ private:
   void announceFiles(const std::vector<std::filesystem::path> &paths, uint64_t token)
   {
     // A transient native owner notification must never re-export our own projection.
+    // AppKit resolves /var aliases to /private/var when converting file references.
+    const auto canonicalRuntimePath = QFileInfo(m_dir.path()).canonicalFilePath();
     for (const auto &path : paths) {
       const auto localPath = qs(path.lexically_normal().string());
-      if (localPath == m_dir.path() || localPath.startsWith(m_dir.path() + '/'))
+      if (localPath == m_dir.path() || localPath.startsWith(m_dir.path() + '/') ||
+          (!canonicalRuntimePath.isEmpty() &&
+           (localPath == canonicalRuntimePath || localPath.startsWith(canonicalRuntimePath + '/'))))
         return;
     }
     // No file body is read: only fixed, bounded metadata and source identity.
