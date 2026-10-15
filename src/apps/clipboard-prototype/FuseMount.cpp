@@ -210,7 +210,13 @@ struct fuse_operations operations()
   ops.statfs = getFilesystemStats;
   ops.init = initialize;
   ops.destroy = [](void *data) { static_cast<FuseMount *>(data)->log.event("unmounted"); };
-  ops.getxattr = [](const char *, const char *, char *, std::size_t) { return -ENODATA; };
+  ops.getxattr = [](const char *, const char *, char *, std::size_t) {
+#ifdef __APPLE__
+    return -ENOATTR;
+#else
+    return -ENODATA;
+#endif
+  };
   ops.listxattr = [](const char *, char *, std::size_t) { return 0; };
   ops.setxattr = [](const char *, const char *, const char *, std::size_t, int) { return -EROFS; };
   ops.removexattr = [](const char *, const char *) { return -EROFS; };
@@ -276,7 +282,12 @@ int FuseMount::run(const std::string &mountpoint)
       "deskflow-file-prototype",
       "-f",
       "-o",
+#ifdef __APPLE__
+      // An unavailable FSKit backend must fail rather than load a kernel extension.
+      "backend=fskit,ro,default_permissions,fsname=deskflow-clipboard-prototype,max_read=262144,max_threads=8",
+#else
       "ro,default_permissions,fsname=deskflow-clipboard-prototype,max_read=262144,max_threads=8",
+#endif
       mountpoint,
   };
   std::vector<char *> argv;

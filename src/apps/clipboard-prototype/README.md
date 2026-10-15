@@ -1,4 +1,33 @@
-# Ubuntu clipboard and file prototype
+# Clipboard and file prototype
+
+The `macos` branch also builds the generated file source with macFUSE3 and an
+AppKit clipboard probe. See the [macOS progress and commands](../../../docs/dev/clipboard-macos-progress.md)
+for actual verification status, FSKit setup, and Finder acceptance. Linux keeps
+the X11 implementation described below. Neither platform prototype replaces the
+Deskflow core clipboard protocol.
+
+macFUSE is an optional prototype/reference backend, not a selected requirement
+for the shipping macOS app. Native File Provider is the preferred candidate to
+evaluate next; its Finder copy behavior and system-managed disk cache still need
+measurement. The macOS progress document records the File Promises comparison.
+
+On macOS, the default tests use isolated named pasteboards and never mount a
+filesystem. The additional `deskflow-mac-file-service` connects a selected local
+file list to the [shared file service](../../lib/clipboard/README.md) through a
+bounded local JSONL test channel; it requires explicit `--consistency detectable`.
+
+```sh
+cmake -S src/apps/clipboard-prototype -B build/macos-clipboard -G Ninja
+cmake --build build/macos-clipboard
+ctest --test-dir build/macos-clipboard --output-on-failure
+```
+
+macFUSE SDK files are discovered in `/usr/local/lib/pkgconfig`. macOS mounting
+explicitly selects FSKit and requires its extension to be available and enabled.
+There is no implicit kernel-backend fallback. Mount tests remain opt-in through
+`CLIPBOARD_PROTOTYPE_DESKTOP_TESTS`; the X11 clipboard test is Linux-only.
+
+## Ubuntu workflow
 
 This experimental C++20 prototype exercises milestones M0–M2 from the
 [Ubuntu roadmap](../../../docs/dev/clipboard-progress.md). It exposes generated
@@ -21,7 +50,7 @@ cmake --build build/clipboard-prototype --parallel
 ctest --test-dir build/clipboard-prototype --output-on-failure
 ```
 
-Only the generated-source test runs by default. To also mount a filesystem and
+Generated-source and shared-service tests run by default. To also mount a filesystem and
 temporarily own the current desktop clipboard, explicitly enable the integration
 tests:
 

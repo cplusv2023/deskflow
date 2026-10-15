@@ -13,6 +13,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import platform
 import subprocess
 import tempfile
 import time
@@ -152,13 +153,20 @@ def mount_test(tool, work):
             assert max(row["length"] for row in requests) <= 256 * 1024
             assert max(row["activeRequests"] for row in requests) <= 8
             assert max(row["inFlightBytes"] for row in requests) <= 8 * 256 * 1024
-            status = Path(f"/proc/{process.pid}/status").read_text()
+            if platform.system() == "Darwin":
+                memory = ["rssKiB: " + run("/bin/ps", "-o", "rss=", "-p", process.pid).stdout.decode().strip()]
+            else:
+                status = Path(f"/proc/{process.pid}/status").read_text()
+                memory = [line for line in status.splitlines() if line.startswith(("VmRSS:", "VmHWM:"))]
             return {"mount_ranges": "passed", "range_request_count": len(requests),
-                    "memory": [line for line in status.splitlines() if line.startswith(("VmRSS:", "VmHWM:"))]}
+                    "memory": memory}
         finally:
             stop(process)
             if os.path.ismount(mount):
-                run("fusermount3", "-u", mount)
+                if platform.system() == "Darwin":
+                    run("/sbin/umount", mount)
+                else:
+                    run("fusermount3", "-u", mount)
             assert not os.path.ismount(mount), "Prototype left a mounted filesystem"
 
 

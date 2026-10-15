@@ -56,4 +56,6 @@ Check out our [Building guide](build.md) or our general @ref contributing_guide 
 
 For the proposed clipboard extension, see the [on-demand clipboard goals and architecture](clipboard-design.md) and [Ubuntu prototype progress](clipboard-progress.md) (Chinese).
 
+The [macOS implementation and validation record](clipboard-macos-progress.md) tracks the `macos` branch, including its Finder and integration gates.
+
 Cross-platform semantics and shared fixtures are described in the [clipboard interface contract draft](clipboard-contract.md) (Chinese).

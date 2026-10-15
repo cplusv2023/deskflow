@@ -98,6 +98,25 @@ project(
   LANGUAGES C CXX
 )
 
+# Enable these at the common ancestor of all macOS targets. Enabling OBJCXX
+# only inside an optional app changes .mm detection in sibling libraries without
+# giving those directories the Objective-C++ compile rules.
+if(APPLE)
+  enable_language(OBJC OBJCXX)
+  set(CMAKE_OBJCXX_STANDARD 20)
+  set(CMAKE_OBJCXX_STANDARD_REQUIRED ON)
+  set(CMAKE_OBJCXX_EXTENSIONS OFF)
+endif()
+
+# Register tests at the common ancestor of the core tests and optional clipboard
+# tools. Enabling testing only in src/unittests hides sibling tests from CTest.
+# Keep BUILD_TESTS as the existing core switch; default prototype tests to it.
+option(BUILD_TESTS "Build tests" ON)
+option(BUILD_TESTING "Build clipboard prototype tests" ${BUILD_TESTS})
+if(BUILD_TESTS OR BUILD_TESTING OR CLIPBOARD_SERVICE_TESTS)
+  enable_testing()
+endif()
+
 # Define Additional "PROJECT" vars for packaging and metadata
 set(CMAKE_PROJECT_PROPER_NAME "Deskflow")
 set(CMAKE_PROJECT_VENDOR "${CMAKE_PROJECT_PROPER_NAME} Devs")
