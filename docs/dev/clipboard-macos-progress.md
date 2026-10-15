@@ -18,13 +18,25 @@
 重复 Finder 复制时，源进程 RSS 采样最大值为 15536 KiB；采样器设置 50 ms
 间隔，这不是系统记录的实际峰值。Finder 取消与预览对照仍待补测。
 
-## 产品后端调整（用户反馈）
+## 首版路线：先基于 FUSE 交付（用户最新决定）
 
-用户反馈 macFUSE 安装与扩展启用不适合作为普通用户的强制前提。因此，现有
-FUSE 后端保留为**可选原型和范围读取验收参照**，不作为消费用户的强制依赖。
-已通过的 M0–M2 证明该原型可行，不代表最终产品后端已经选定。
+用户优先要求推出可用、便于试用和定位问题的版本。基于已有 M0–M2 结果，
+**首版选择现有 macFUSE/FSKit 文件提供后端，File Provider 后置**。
+首批使用者需要安装 macFUSE 并启用 FSKit 模块；先接受这一部署前提，集中
+完成实际 Ubuntu↔Mac 文件传输。此前对普通用户安装体验的顾虑保留为后续
+改进方向，不再阻塞首版。此次路线调整不新增或重跑测试。
 
-**File Provider 是优先评估的原生后端候选**，不依赖 FUSE。采用
+现有成果是可用的本机原型，尚非跨机可用产品：生成源→FUSE→Finder 粘贴
+已打通，但真实文件服务、Broker、文件投影和正式传输尚未连成完整链路。
+M0–M2 的已有结论不扩大为 M4/M5 已完成。
+
+首版以文件复制为主要交付闭环：Ubuntu/Mac 任一端复制真实文件或目录，另一端
+通过本地文件入口正常粘贴，读取时才传输；源变更按已确认的 detectable 模式
+失败。复用已有文本/HTML/PNG 能力，跨应用格式保真扩展与性能调优后置。
+为便于试用和后续优化，集成时提供功能开关、依赖/连接/挂载状态、可定位的
+失败原因和带请求标识的日志，并处理退出、断线及重连时的资源清理。
+
+**File Provider 是后续改善部署体验的原生候选**，不依赖 FUSE。采用
 `NSFileProviderReplicatedExtension` 可先公告元数据，再由系统按访问请求内容；
 Apple 的官方示例也使用本地 HTTP 文件服务器，架构上可以对接 Ubuntu/LAN
 文件服务。这需要随 app 打包并签名的 appex、域管理及共享状态，不能仅替换一个
@@ -32,7 +44,7 @@ Apple 的官方示例也使用本地 HTTP 文件服务器，架构上可以对�
 
 File Provider 支持 partial range，但 Apple 明确：POSIX 部分读取可触发部分下载，
 整文件 clone 或通过 file coordination 读取会请求完整文件。因此，尚不能承诺
-Finder Cmd+V 没有整文件中间落盘。下一步用最小签名 appex 测试 Finder 实际回调、
+Finder Cmd+V 没有整文件中间落盘。后续评估需用最小签名 appex 确认 Finder 实际回调、
 系统缓存及峰值磁盘空间、取消、断线与首次部署体验，再决定是否满足产品目标。
 [Apple partial-content API](https://developer.apple.com/documentation/fileprovider/nsfileproviderpartialcontentfetching)
 
@@ -205,16 +217,17 @@ TIFF→PNG 像素与方向转换，以及拒绝嵌入内容和过大输入。以
 
 ## 后续协作与 M5 门槛
 
-1. 优先验证 File Provider 签名 appex 的 Finder 粘贴、缓存/磁盘、取消和部署体验；
-   FUSE 仅作可选对照。在已有 RSS 采样基础上补充取消、预览与更大文件测试，
-   并扩展 M3 多应用与后台行为覆盖。
-2. Ubuntu 组评审并合入共享服务接口，统一租约、结果校验和真实文件 detectable
-   行为；两端继续使用同一份 `fixtures-v1.json`。
-3. 将平台发布、当前公告 Broker、文件投影与 whole-offer 周期续租接起来。
+1. 以现有 FUSE 后端为首版基础，停止扩展本机可行性实验；File Provider、
+   额外格式适配和性能调优后置。本轮仅依照已有结果确定范围，不运行测试。
+2. 与 Ubuntu 组对齐共享服务接口和传输格式，统一租约、结果校验及真实文件
+   detectable 行为；两端继续使用同一份 `fixtures-v1.json`。
+3. 将平台发布、当前公告 Broker、FUSE 文件投影与 whole-offer 周期续租接起来。
    Broker 的 revision 当前只是本地串行顺序；正式多端顺序必须由服务端决定。
 4. 共同冻结协议能力门控、线格式和版本分配，再实现认证主会话绑定的独立 TLS
    数据连接。不得向未经协商的 1.8 对端发送新消息。
-5. 通过 LegacyClipboardAdapter 统一旧/新剪贴板写入和 core 生命周期，最后执行
-   Ubuntu↔Mac 真机双向、旧端兼容与大文件期间键鼠响应验收。
+5. 通过 LegacyClipboardAdapter 统一旧/新剪贴板写入和 core 生命周期，补齐
+   功能开关、状态、错误日志及资源清理，形成便于双机试用的首版。
+   Ubuntu↔Mac 真机双向、旧端兼容与大文件期间键鼠响应仍是未获得的交付证据，
+   不能用本机已有结果替代；本轮不执行这些测试。
 
 在这些步骤完成前，不将独立原型、JSONL 管道、共享库链接或单测通过标记为 M5。

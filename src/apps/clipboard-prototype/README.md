@@ -6,10 +6,11 @@ for actual verification status, FSKit setup, and Finder acceptance. Linux keeps
 the X11 implementation described below. Neither platform prototype replaces the
 Deskflow core clipboard protocol.
 
-macFUSE is an optional prototype/reference backend, not a selected requirement
-for the shipping macOS app. Native File Provider is the preferred candidate to
-evaluate next; its Finder copy behavior and system-managed disk cache still need
-measurement. The macOS progress document records the File Promises comparison.
+The first usable release will build on the existing macFUSE/FSKit backend,
+accepting its installation requirement for early users. Native File Provider
+evaluation is deferred while real peer transport and lifecycle integration take
+priority. The current tools remain local prototypes, not a cross-host release.
+The macOS progress document records the scope and the File Promises comparison.
 
 On macOS, the default tests use isolated named pasteboards and never mount a
 filesystem. The additional `deskflow-mac-file-service` connects a selected local
