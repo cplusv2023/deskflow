@@ -53,3 +53,7 @@ Note: In older versions of deskflow you may see the term `Screen` used in place 
 For more info, see our [Wiki](https://github.com/deskflow/deskflow/wiki).
 
 Check out our [Building guide](build.md) or our general @ref contributing_guide "Contributing section". We also have a detailed [Protocol Reference](protocol_reference.md).
+
+For the proposed clipboard extension, see the [on-demand clipboard goals and architecture](clipboard-design.md) and [Ubuntu prototype progress](clipboard-progress.md) (Chinese).
+
+Cross-platform semantics and shared fixtures are described in the [clipboard interface contract draft](clipboard-contract.md) (Chinese).

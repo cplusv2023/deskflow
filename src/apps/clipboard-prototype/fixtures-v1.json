@@ -1,0 +1,244 @@
+{
+  "schemaVersion": 1,
+  "fixtureSet": "deskflow-clipboard-v1",
+  "generator": {
+    "id": "mod251-v1",
+    "period": 251,
+    "expression": "byte[i] = ((offset + i) % 251 + seed) % 251",
+    "offsetEncoding": "unsigned 64-bit; decimal string in JSON",
+    "seedRange": [
+      0,
+      250
+    ]
+  },
+  "files": [
+    {
+      "fileId": "hello",
+      "path": "hello.txt",
+      "version": "fixture-v1",
+      "size": "86",
+      "generator": "literal-utf8",
+      "literal": "Deskflow on-demand clipboard prototype.\nRead requests fetch only the requested range.\n"
+    },
+    {
+      "fileId": "empty",
+      "path": "empty.txt",
+      "version": "fixture-v1",
+      "size": "0",
+      "generator": "mod251-v1",
+      "seed": 0
+    },
+    {
+      "fileId": "preview",
+      "path": "preview.svg",
+      "version": "fixture-v1",
+      "size": "189",
+      "generator": "literal-utf8",
+      "literal": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"64\" height=\"64\" viewBox=\"0 0 64 64\"><rect width=\"64\" height=\"64\" rx=\"8\" fill=\"#2358a8\"/><circle cx=\"32\" cy=\"32\" r=\"18\" fill=\"#f6d548\"/></svg>\n"
+    },
+    {
+      "fileId": "unicode",
+      "path": "nested folder/含 空格.txt",
+      "version": "fixture-v1",
+      "size": "12289",
+      "generator": "mod251-v1",
+      "seed": 17
+    },
+    {
+      "fileId": "payload",
+      "path": "nested folder/payload.bin",
+      "version": "fixture-v1",
+      "size": "4194341",
+      "generator": "mod251-v1",
+      "seed": 41
+    },
+    {
+      "fileId": "large",
+      "path": "large.bin",
+      "version": "fixture-v1",
+      "size": "4294967419",
+      "generator": "mod251-v1",
+      "seed": 97
+    }
+  ],
+  "rangeVectors": [
+    {
+      "fileId": "hello",
+      "offset": "0",
+      "length": 128,
+      "status": "OK",
+      "returnedBytes": 86,
+      "eof": true,
+      "bytesHex": "4465736b666c6f77206f6e2d64656d616e6420636c6970626f6172642070726f746f747970652e0a52656164207265717565737473206665746368206f6e6c7920746865207265717565737465642072616e67652e0a",
+      "sha256": "1d4a718e25d8d6b6a81d9a9225eab64bf0f1c24e734cf97c96c96eb6c46835d5"
+    },
+    {
+      "fileId": "empty",
+      "offset": "0",
+      "length": 1,
+      "status": "OK",
+      "returnedBytes": 0,
+      "eof": true,
+      "bytesHex": "",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "fileId": "payload",
+      "offset": "250",
+      "length": 32,
+      "status": "OK",
+      "returnedBytes": 32,
+      "eof": false,
+      "bytesHex": "28292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f4041424344454647",
+      "sha256": "cd42247223b5cc6f91cb16b4574fe79b4152950c062b850facd5e67a4b11a164"
+    },
+    {
+      "fileId": "payload",
+      "offset": "262140",
+      "length": 32,
+      "status": "OK",
+      "returnedBytes": 32,
+      "eof": false,
+      "bytesHex": "898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8",
+      "sha256": "130a8246d7eee9542767723e710a49afa222436b85577bb3f1240fb05fff2d1f"
+    },
+    {
+      "fileId": "unicode",
+      "offset": "12280",
+      "length": 64,
+      "status": "OK",
+      "returnedBytes": 9,
+      "eof": true,
+      "bytesHex": "f9fa00010203040506",
+      "sha256": "77bc88d313b8b17aa975f772dc9703c1a34ff1c54f8b5c77ec936604f88d960f"
+    },
+    {
+      "fileId": "large",
+      "offset": "4294967305",
+      "length": 97,
+      "status": "OK",
+      "returnedBytes": 97,
+      "eof": false,
+      "bytesHex": "e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fa000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a",
+      "sha256": "eefce29b980ffe44e85751aa30ca16e53e23aed15b99b36ab3697cabe72dc406"
+    },
+    {
+      "fileId": "large",
+      "offset": "4294967418",
+      "length": 8,
+      "status": "OK",
+      "returnedBytes": 1,
+      "eof": true,
+      "bytesHex": "5b",
+      "sha256": "245843abef9e72e7efac30138a994bf6301e7e1d7d7042a33d42e863d2638811"
+    },
+    {
+      "fileId": "large",
+      "offset": "4294967419",
+      "length": 32,
+      "status": "OK",
+      "returnedBytes": 0,
+      "eof": true,
+      "bytesHex": "",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "fileId": "large",
+      "offset": "4294967420",
+      "length": 32,
+      "status": "OK",
+      "returnedBytes": 0,
+      "eof": true,
+      "bytesHex": "",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "fileId": "large",
+      "offset": "18446744073709551615",
+      "length": 32,
+      "status": "OK",
+      "returnedBytes": 0,
+      "eof": true,
+      "bytesHex": "",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ],
+  "nativeCopyVectors": [
+    {
+      "fileId": "large",
+      "sizeOverride": "268435579",
+      "sha256": "66c250955c4a76ed9d1f05ec6dcee7a978d07de01528e94c32632e75c4df7692"
+    }
+  ],
+  "faultPlans": [
+    {
+      "name": "short-positive",
+      "fileId": "payload",
+      "offset": "0",
+      "phase": "before_response",
+      "effect": {
+        "maxResponseBytes": 4093
+      },
+      "expected": "OK, eof=false until actual file end; aggregate remaining bytes",
+      "occurrences": 1
+    },
+    {
+      "name": "zero-before-eof",
+      "fileId": "payload",
+      "offset": "262144",
+      "phase": "before_response",
+      "effect": {
+        "maxResponseBytes": 0
+      },
+      "expected": "INVALID_SOURCE_RESPONSE",
+      "occurrences": 1
+    },
+    {
+      "name": "deadline",
+      "fileId": "payload",
+      "offset": "262144",
+      "phase": "before_response",
+      "effect": {
+        "delayMs": 100,
+        "clientDeadlineMs": 20
+      },
+      "expected": "TIMEOUT",
+      "occurrences": 1
+    },
+    {
+      "name": "disconnect-before-response",
+      "fileId": "payload",
+      "offset": "262144",
+      "phase": "before_response",
+      "effect": {
+        "disconnect": true
+      },
+      "expected": "DISCONNECTED",
+      "occurrences": 1
+    },
+    {
+      "name": "truncated-frame",
+      "fileId": "payload",
+      "offset": "262144",
+      "phase": "during_response",
+      "effect": {
+        "disconnectAfterPayloadBytes": 17
+      },
+      "expected": "DISCONNECTED; discard incomplete response",
+      "occurrences": 1
+    },
+    {
+      "name": "source-version-change",
+      "fileId": "payload",
+      "offset": "262144",
+      "phase": "before_read",
+      "effect": {
+        "revokeVersion": "fixture-v1",
+        "replacementVersion": "fixture-v2",
+        "replacementSeed": 42
+      },
+      "expected": "SOURCE_CHANGED; no v2 bytes in v1 response",
+      "occurrences": 1
+    }
+  ]
+}
