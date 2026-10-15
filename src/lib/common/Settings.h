@@ -52,6 +52,7 @@ public:
     inline static const auto Interface = QStringLiteral("core/interface");
     inline static const auto LastVersion = QStringLiteral("core/lastVersion");
     inline static const auto Port = QStringLiteral("core/port");
+    inline static const auto FileClipboard = QStringLiteral("core/fileClipboard");
     inline static const auto PreventSleep = QStringLiteral("core/preventSleep");
     inline static const auto ProcessMode = QStringLiteral("core/processMode");
     inline static const auto ComputerName = QStringLiteral("core/computerName");
@@ -284,6 +285,7 @@ private:
     , Core::Interface
     , Core::LastVersion
     , Core::Port
+    , Core::FileClipboard
     , Core::PreventSleep
     , Core::ProcessMode
     , Core::EnableEnterCommand
@@ -345,6 +347,7 @@ private:
     , Gui::ShownServerFirstStartMessage
     , Gui::ShowVersionInTitle
     , Gui::IgnoreMissingKeyboardLayouts
+    , Core::FileClipboard
     , Core::PreventSleep
     , Core::EnableEnterCommand
     , Core::EnableExitCommand

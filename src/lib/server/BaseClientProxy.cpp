@@ -5,6 +5,9 @@
  * SPDX-License-Identifier: GPL-2.0-only WITH LicenseRef-OpenSSL-Exception
  */
 
+#include "common/Settings.h"
+#include "deskflow/ipc/CoreIpc.h"
+
 #include "server/BaseClientProxy.h"
 
 //
@@ -31,4 +34,10 @@ void BaseClientProxy::getJumpCursorPos(int32_t &x, int32_t &y) const
 std::string BaseClientProxy::getName() const
 {
   return m_name;
+}
+
+void BaseClientProxy::startClipboard()
+{
+  if (Settings::value(Settings::Core::FileClipboard).toBool())
+    ipcSendToClient("clipboardStatus", "Legacy peer: file clipboard unavailable");
 }

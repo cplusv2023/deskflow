@@ -3,8 +3,12 @@
  * SPDX-FileCopyrightText: (C) 2026 Deskflow Developers
  * SPDX-License-Identifier: GPL-2.0-only WITH LicenseRef-OpenSSL-Exception
  */
+
+#include "ParentWatch.h"
+
 #include "FakeRemoteSource.h"
 #include "FuseMount.h"
+#include "RpcFileSource.h"
 
 #include <algorithm>
 #include <charconv>
@@ -34,9 +38,14 @@ void help()
 {
   std::cout << "Usage:\n"
                "  deskflow-file-prototype --mount PATH --log JSONL [options]\n"
+               "  deskflow-file-prototype --socket PATH --mount PATH --log JSONL [--detectable]\n"
                "  deskflow-file-prototype --describe [options]\n"
                "  deskflow-file-prototype --read FILEID --offset N --length N --output PATH [options]\n\n"
                "Options:\n"
+               "  --socket PATH           connect to same-user experimental file service\n"
+               "  --detectable            explicitly allow detectable local-file consistency\n"
+               "  --timeout-ms N          RPC timeout, 1..600000 (default 5000)\n"
+               "  --lease-ttl-ms N        requested RPC lease TTL, 1..60000 (default 30000)\n"
                "  --large-size BYTES       large.bin size (default 4294967419)\n"
                "  --delay-ms N             simulated delay per source response (default 0)\n"
                "  --source-chunk-size N    maximum bytes returned per source call, 1..262144\n"
@@ -54,10 +63,15 @@ void help()
 int main(int argc, char **argv)
 {
   try {
+    deskflow::clipboard::prototype::ParentWatch parent(argc, argv);
     std::string mountpoint;
     std::string logPath;
     std::string readId;
     std::string outputPath;
+    std::string socketPath;
+    clipboard_proto::RpcFileSource::Options rpcOptions;
+    bool rpcOptionSet = false;
+    bool fakeOptionSet = false;
     bool describe = false;
     bool hasOffset = false;
     bool hasLength = false;
@@ -74,6 +88,11 @@ int main(int argc, char **argv)
       }
       if (option == "--foreground")
         continue;
+      if (option == "--detectable") {
+        rpcOptions.detectable = true;
+        rpcOptionSet = true;
+        continue;
+      }
       if (option == "--describe") {
         describe = true;
         continue;
@@ -89,13 +108,28 @@ int main(int argc, char **argv)
         readId = value;
       else if (option == "--output")
         outputPath = value;
-      else if (option == "--large-size")
+      else if (option == "--socket")
+        socketPath = value;
+      else if (option == "--timeout-ms" || option == "--lease-ttl-ms") {
+        const auto parsed = number(value, option);
+        const auto limit = option == "--timeout-ms" ? 600000U : 60000U;
+        if (parsed == 0 || parsed > limit)
+          throw std::invalid_argument(option + " must be between 1 and " + std::to_string(limit));
+        if (option == "--timeout-ms")
+          rpcOptions.timeoutMs = static_cast<std::uint32_t>(parsed);
+        else
+          rpcOptions.leaseTtlMs = static_cast<std::uint32_t>(parsed);
+        rpcOptionSet = true;
+      } else if (option == "--large-size") {
         largeSize = number(value, option);
-      else if (option == "--delay-ms")
+        fakeOptionSet = true;
+      } else if (option == "--delay-ms") {
         delayMs = number(value, option);
-      else if (option == "--source-chunk-size")
+        fakeOptionSet = true;
+      } else if (option == "--source-chunk-size") {
         sourceChunkSize = number(value, option);
-      else if (option == "--offset") {
+        fakeOptionSet = true;
+      } else if (option == "--offset") {
         offset = number(value, option);
         hasOffset = true;
       } else if (option == "--length") {
@@ -108,6 +142,10 @@ int main(int argc, char **argv)
                        static_cast<unsigned int>(!mountpoint.empty());
     if (modes != 1)
       throw std::invalid_argument("Choose exactly one of --mount, --describe and --read");
+    if ((!socketPath.empty() && mountpoint.empty()) || (socketPath.empty() && rpcOptionSet))
+      throw std::invalid_argument("--socket and its options require --mount; RPC options require --socket");
+    if (!socketPath.empty() && fakeOptionSet)
+      throw std::invalid_argument("Set generated source options on the service, separately from --socket mounts");
     if (delayMs > std::numeric_limits<unsigned int>::max())
       throw std::invalid_argument("delay-ms is too large");
     if (sourceChunkSize == 0 || sourceChunkSize > clipboard_proto::FakeRemoteSource::maxRequestBytes)
@@ -128,6 +166,11 @@ int main(int argc, char **argv)
         throw std::invalid_argument("Trace log must be outside the mountpoint");
     }
     clipboard_proto::TraceLog log(logPath);
+    if (!socketPath.empty()) {
+      clipboard_proto::RpcFileSource source(socketPath, log, rpcOptions);
+      clipboard_proto::FuseMount filesystem(source, log);
+      return filesystem.run(mountpoint);
+    }
     clipboard_proto::FakeRemoteSource source(
         log, largeSize, static_cast<unsigned int>(delayMs), static_cast<std::size_t>(sourceChunkSize)
     );

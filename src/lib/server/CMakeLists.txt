@@ -26,6 +26,8 @@ add_library(server STATIC
   ClientProxy1_6.h
   ClientProxy1_7.cpp
   ClientProxy1_7.h
+  ClientProxy1_9.cpp
+  ClientProxy1_9.h
   ClientProxy1_8.cpp
   ClientProxy1_8.h
   ClientProxyUnknown.cpp
@@ -40,7 +42,7 @@ add_library(server STATIC
   Server.h
 )
 
-target_link_libraries(server PUBLIC common)
+target_link_libraries(server PUBLIC common clipboard_runtime)
 
 if(UNIX)
   target_link_libraries(server PUBLIC app)

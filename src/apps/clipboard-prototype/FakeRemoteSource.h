@@ -12,6 +12,7 @@
 #include <fstream>
 #include <mutex>
 #include <span>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -26,10 +27,12 @@ class TraceLog
 public:
   explicit TraceLog(const std::string &path);
   void event(std::string_view operation, std::string_view fields = {});
+  void setOfferId(std::string offerId);
 
 private:
   std::ofstream m_stream;
   std::mutex m_mutex;
+  std::string m_offerId{"mock-offer-1"};
   std::chrono::steady_clock::time_point m_start{std::chrono::steady_clock::now()};
 };
 
@@ -43,7 +46,50 @@ struct FileEntry
   std::string literal;
 };
 
-class FakeRemoteSource
+class FileSourceError : public std::runtime_error
+{
+public:
+  FileSourceError(int errorNumber, const std::string &message) : std::runtime_error(message), errorNumber(errorNumber)
+  {
+  }
+  int errorNumber;
+};
+
+// Stable metadata tree plus handle-bound demand reads. No full-file cache.
+class FileTreeSource
+{
+public:
+  static constexpr std::size_t maxRequestBytes = 256 * 1024;
+  virtual ~FileTreeSource() = default;
+  virtual const std::vector<FileEntry> &entries() const = 0;
+  const FileEntry *findPath(std::string_view path) const;
+  const FileEntry *findId(std::string_view id) const;
+  std::vector<const FileEntry *> children(std::string_view directory) const;
+  virtual void metadata(std::string_view action, std::string_view path, const FileEntry *entry) = 0;
+  virtual void open(const FileEntry &, std::uint64_t)
+  {
+  }
+  virtual void close(const FileEntry &, std::uint64_t)
+  {
+  }
+  virtual std::size_t
+  readRange(const FileEntry &entry, std::uint64_t offset, std::span<char> buffer, std::uint64_t handleId = 0) = 0;
+  virtual void cancel() noexcept
+  {
+  }
+  virtual void beginShutdown() noexcept
+  {
+  }
+  virtual bool hasPendingRequests() const noexcept
+  {
+    return false;
+  }
+  virtual void shutdown() noexcept
+  {
+  }
+};
+
+class FakeRemoteSource : public FileTreeSource
 {
 public:
   static constexpr std::size_t maxRequestBytes = 256 * 1024;
@@ -58,7 +104,7 @@ public:
   const FileEntry *findPath(std::string_view path) const;
   const FileEntry *findId(std::string_view id) const;
   std::vector<const FileEntry *> children(std::string_view directory) const;
-  const std::vector<FileEntry> &entries() const
+  const std::vector<FileEntry> &entries() const override
   {
     return m_entries;
   }
@@ -71,8 +117,8 @@ public:
   // Caller must aggregate short responses until requested length or real EOF.
   // buffer.size() must not exceed maxRequestBytes; no whole-file storage exists.
   std::size_t
-  readRange(const FileEntry &entry, std::uint64_t offset, std::span<char> buffer, std::uint64_t handleId = 0);
-  void metadata(std::string_view action, std::string_view path, const FileEntry *entry);
+  readRange(const FileEntry &entry, std::uint64_t offset, std::span<char> buffer, std::uint64_t handleId = 0) override;
+  void metadata(std::string_view action, std::string_view path, const FileEntry *entry) override;
   std::string describe() const;
 
 private:

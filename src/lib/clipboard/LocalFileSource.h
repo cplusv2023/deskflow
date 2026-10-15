@@ -5,43 +5,76 @@
  */
 #pragma once
 
-#include "FileService.h"
+#include "FileTypes.h"
 
+#include <chrono>
 #include <filesystem>
+#include <functional>
+#include <memory>
+#include <string>
+#include <vector>
 
 namespace deskflow::clipboard {
 
-struct LocalCapture
-{
-  Status status{Status::Ok};
-  Offer offer;
-};
-
-// POSIX source for macOS and Ubuntu. Captures stable IDs and directory membership,
-// pins file descriptors, and checks identity/size/mtime/ctime before AND after
-// pread. This detects ordinary mutations but is not an immutable snapshot.
-// Symlinks and special files are rejected, never followed implicitly.
-class LocalFileSource final : public FileSource
+class LocalFileSource
 {
 public:
-  static LocalCapture capture(
-      const std::vector<std::filesystem::path> &paths, std::string offerId, std::string offerVersion,
-      std::uint32_t maxEntries = 512
+  using Clock = std::chrono::steady_clock;
+  struct Options
+  {
+    std::string sessionEpoch; // Required; authentication/epoch generation belongs to transport.
+    std::uint32_t defaultTtlMs{30000};
+    std::uint32_t maxTtlMs{60000};
+    std::uint32_t acquisitionWindowMs{30000};
+    std::size_t maxOffers{32};
+    std::size_t maxEntriesPerOffer{4096};
+    std::size_t maxManifestBytes{4 * 1024 * 1024};
+    std::size_t maxRootsPerOffer{64};
+    std::size_t maxDepth{64};
+    std::size_t maxOpenHandles{256};
+    // Terminal lease records are retained for precise idempotent status in this session.
+    std::size_t maxLeaseRecords{4096};
+    std::uint32_t maxReadBytes{262144};
+    // A bounded short response is legal; useful for testing real aggregation.
+    std::uint32_t maxResponseBytes{262144};
+    std::function<Clock::time_point()> now{[] { return Clock::now(); }};
+  };
+
+  explicit LocalFileSource(Options options);
+  ~LocalFileSource();
+  LocalFileSource(const LocalFileSource &) = delete;
+  LocalFileSource &operator=(const LocalFileSource &) = delete;
+
+  OfferResult createOffer(const std::vector<std::filesystem::path> &paths);
+  LeaseResult acquire(
+      const std::string &sessionEpoch, const std::string &offerId, const std::string &expectedOfferVersion,
+      std::uint32_t requestedTtlMs = 0
   );
-  ~LocalFileSource() override;
-  bool immutable() const override;
-  Status validate(const Entry &entry) override;
-  SourceRead
-  read(const Entry &entry, std::uint64_t offset, std::uint32_t length, const RequestContext &context) override;
+  LeaseResult renew(const std::string &sessionEpoch, const std::string &leaseId, std::uint32_t requestedTtlMs = 0);
+  LeaseResult release(const std::string &sessionEpoch, const std::string &leaseId);
+  LeaseResult revoke(const std::string &sessionEpoch, const std::string &leaseId);
+
+  StatResult stat(
+      const std::string &sessionEpoch, const std::string &leaseId, const std::string &fileId,
+      const std::string &expectedVersion
+  );
+  ListResult list(
+      const std::string &sessionEpoch, const std::string &leaseId, const std::string &directoryId,
+      const std::string &expectedVersion
+  );
+  OpenResult open(
+      const std::string &sessionEpoch, const std::string &leaseId, const std::string &fileId,
+      const std::string &expectedVersion, ConsistencyMode consistency = ConsistencyMode::Immutable
+  );
+  ReadResult read(const ReadRequest &request);
+  Status close(const std::string &sessionEpoch, const std::string &handleId);
+  void disconnect();
+  void collectExpired();
+  std::string currentOfferId() const;
 
 private:
-  struct File;
-  LocalFileSource() = default;
-  Status captureObject(
-      int parentFd, const std::string &name, const std::string &parentId, Offer &offer, std::uint32_t maxEntries,
-      unsigned int depth
-  );
-  std::unordered_map<std::string, std::unique_ptr<File>> m_files;
+  struct Impl;
+  std::unique_ptr<Impl> m_impl;
 };
 
 } // namespace deskflow::clipboard

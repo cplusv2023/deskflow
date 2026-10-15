@@ -8,7 +8,10 @@
 
 #pragma once
 
+#include <array>
 #include <cstdint>
+#include <optional>
+#include <string>
 
 class IEventQueue;
 
@@ -18,6 +21,13 @@ namespace deskflow {
 /*!
 Defines the interface for all streams.
 */
+struct ClipboardBinding
+{
+  std::array<unsigned char, 32> secret{};
+  std::array<unsigned char, 32> peerFingerprint{};
+  std::string peerAddress;
+};
+
 class IStream
 {
 public:
@@ -35,6 +45,11 @@ public:
   to \c flush() return immediately.
   */
   virtual void close() = 0;
+  // Present only after mutual authentication of the main connection.
+  virtual std::optional<ClipboardBinding> clipboardBinding()
+  {
+    return std::nullopt;
+  }
 
   //! Read from stream
   /*!

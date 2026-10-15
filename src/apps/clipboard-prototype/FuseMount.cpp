@@ -5,8 +5,10 @@
  */
 #define FUSE_USE_VERSION 35
 #include <fuse.h>
+#include <fuse_lowlevel.h>
 
 #include "FuseMount.h"
+#include <iostream>
 
 #include <algorithm>
 #include <cerrno>
@@ -15,6 +17,7 @@
 #include <fcntl.h>
 #include <iostream>
 #include <limits>
+#include <optional>
 #include <sys/statvfs.h>
 #include <unistd.h>
 
@@ -100,7 +103,15 @@ int openFile(const char *path, struct fuse_file_info *info)
     return -ENOENT;
   if (entry->directory)
     return -EISDIR;
-  info->fh = mount().open(*entry);
+  try {
+    info->fh = mount().open(*entry);
+  } catch (const FileSourceError &error) {
+    mount().log.event("open_error", "\"message\":" + jsonQuote(error.what()));
+    return -error.errorNumber;
+  } catch (const std::exception &error) {
+    mount().log.event("open_error", "\"message\":" + jsonQuote(error.what()));
+    return -EIO;
+  }
   // Avoid opaque page-cache prefetch during this observability-first prototype.
   info->direct_io = 1;
   info->keep_cache = 0;
@@ -121,13 +132,16 @@ int readFile(const char *, char *buffer, std::size_t size, off_t offset, struct 
   std::size_t completed = 0;
   try {
     while (completed < wanted) {
-      const auto chunk = std::min(wanted - completed, FakeRemoteSource::maxRequestBytes);
+      const auto chunk = std::min(wanted - completed, FileTreeSource::maxRequestBytes);
       const auto read = mount().source.readRange(*entry, start + completed, {buffer + completed, chunk}, info->fh);
       // A zero response before known EOF is a protocol failure, never success.
-      if (read == 0)
+      if (read == 0 || read > chunk)
         return -EIO;
       completed += read;
     }
+  } catch (const FileSourceError &error) {
+    mount().log.event("read_error", "\"message\":" + jsonQuote(error.what()));
+    return -error.errorNumber;
   } catch (const std::exception &error) {
     mount().log.event("read_error", "\"message\":" + jsonQuote(error.what()));
     return -EIO;
@@ -142,7 +156,13 @@ int readFile(const char *, char *buffer, std::size_t size, off_t offset, struct 
 
 int releaseFile(const char *, struct fuse_file_info *info)
 {
-  return mount().release(info->fh) ? 0 : -EBADF;
+  try {
+    return mount().release(info->fh) ? 0 : -EBADF;
+  } catch (const FileSourceError &error) {
+    return -error.errorNumber;
+  } catch (const std::exception &) {
+    return -EIO;
+  }
 }
 
 off_t seekFile(const char *, off_t offset, int whence, struct fuse_file_info *info)
@@ -191,9 +211,11 @@ void *initialize(struct fuse_conn_info *connection, struct fuse_config *config)
   config->attr_timeout = 0;
   config->negative_timeout = 0;
   config->use_ino = 1;
-  connection->max_read = FakeRemoteSource::maxRequestBytes;
+  connection->max_read = FileTreeSource::maxRequestBytes;
   connection->max_readahead = 0;
+  std::cout << "DESKFLOW_FUSE_READY\n" << std::flush;
   mount().log.event("ready", "\"maxRequestBytes\":262144,\"maxWorkerThreads\":8,\"readOnly\":true");
+  mount().startCancellationMonitor(fuse_get_session(fuse_get_context()->fuse));
   return &mount();
 }
 
@@ -209,7 +231,11 @@ struct fuse_operations operations()
   ops.access = checkAccess;
   ops.statfs = getFilesystemStats;
   ops.init = initialize;
-  ops.destroy = [](void *data) { static_cast<FuseMount *>(data)->log.event("unmounted"); };
+  ops.destroy = [](void *data) {
+    auto &state = *static_cast<FuseMount *>(data);
+    state.stopCancellationMonitor();
+    state.log.event("unmounted");
+  };
   ops.getxattr = [](const char *, const char *, char *, std::size_t) {
 #ifdef __APPLE__
     return -ENOATTR;
@@ -242,7 +268,7 @@ struct fuse_operations operations()
 
 } // namespace
 
-FuseMount::FuseMount(FakeRemoteSource &source, TraceLog &log) : source(source), log(log)
+FuseMount::FuseMount(FileTreeSource &source, TraceLog &log) : source(source), log(log)
 {
 }
 
@@ -250,6 +276,7 @@ std::uint64_t FuseMount::open(const FileEntry &entry)
 {
   std::lock_guard lock(m_handlesMutex);
   const auto id = m_nextHandle++;
+  source.open(entry, id);
   m_handles.emplace(id, &entry);
   log.event(
       "open", "\"fileId\":" + jsonQuote(entry.id) + ",\"handleId\":" + std::to_string(id) +
@@ -268,11 +295,44 @@ const FileEntry *FuseMount::handle(std::uint64_t handleId)
 bool FuseMount::release(std::uint64_t handleId)
 {
   std::lock_guard lock(m_handlesMutex);
-  const auto removed = m_handles.erase(handleId);
+  const auto found = m_handles.find(handleId);
+  if (found == m_handles.end())
+    return false;
+  const auto *entry = found->second;
+  m_handles.erase(found);
   log.event(
       "release", "\"handleId\":" + std::to_string(handleId) + ",\"activeHandles\":" + std::to_string(m_handles.size())
   );
-  return removed != 0;
+  source.close(*entry, handleId);
+  return true;
+}
+
+void FuseMount::startCancellationMonitor(struct fuse_session *session)
+{
+  m_cancelMonitor = std::jthread([this, session](std::stop_token stop) {
+    std::optional<std::chrono::steady_clock::time_point> graceDeadline;
+    while (!stop.stop_requested()) {
+      if (fuse_session_exited(session)) {
+        if (!graceDeadline) {
+          source.beginShutdown(); // Prevent another aggregate subread from starting.
+          graceDeadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(250);
+        }
+        if (source.hasPendingRequests() && std::chrono::steady_clock::now() >= *graceDeadline)
+          source.cancel(); // All in-flight RPC phases are interrupted after bounded grace.
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+  });
+}
+
+void FuseMount::stopCancellationMonitor()
+{
+  // destroy can run before the observer sees the exit flag. The source's own
+  // bounded shutdown also covers an in-flight background renewal in that case.
+  source.beginShutdown();
+  m_cancelMonitor.request_stop();
+  if (m_cancelMonitor.joinable())
+    m_cancelMonitor.join();
 }
 
 int FuseMount::run(const std::string &mountpoint)
@@ -295,6 +355,8 @@ int FuseMount::run(const std::string &mountpoint)
     argv.push_back(argument.data());
   const auto callbacks = operations();
   const auto result = fuse_main(static_cast<int>(argv.size()), argv.data(), &callbacks, this);
+  stopCancellationMonitor();
+  source.shutdown();
   log.event("exit", "\"status\":" + std::to_string(result));
   return result;
 }

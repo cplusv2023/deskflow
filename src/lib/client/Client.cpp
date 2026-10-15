@@ -6,6 +6,8 @@
  * SPDX-License-Identifier: GPL-2.0-only WITH LicenseRef-OpenSSL-Exception
  */
 
+#include "clipboard/CoreClipboard.h"
+
 #include "client/Client.h"
 
 #include "arch/Arch.h"
@@ -14,6 +16,7 @@
 #include "client/ServerProxy.h"
 #include "client/ServerProxy1_7.h"
 #include "client/ServerProxy1_8.h"
+#include "client/ServerProxy1_9.h"
 #include "common/NetworkProtocol.h"
 #include "common/Settings.h"
 #include "deskflow/Clipboard.h"
@@ -375,6 +378,8 @@ std::string Client::getName() const
 
 void Client::sendClipboard(ClipboardID id)
 {
+  if (deskflow::clipboard::coreClipboardActive())
+    return;
   // note -- m_mutex must be locked on entry
   assert(m_computer != nullptr);
   assert(m_server != nullptr);
@@ -469,6 +474,8 @@ bool Client::setupComputer(int16_t protocolMinor)
   assert(m_server == nullptr);
 
   m_ready = false;
+  if (protocolMinor < 9 && Settings::value(Settings::Core::FileClipboard).toBool())
+    ipcSendToClient("clipboardStatus", "Legacy peer: file clipboard unavailable");
 
   // only 1.6 and later have a proxy: the clipboard, mouse wheel and key message formats
   // differ below that, and nothing older (synergy 1.4 and earlier) still needs supporting.
@@ -479,6 +486,9 @@ bool Client::setupComputer(int16_t protocolMinor)
     break;
   case 7:
     m_server = new ServerProxy1_7(this, m_stream, m_events);
+    break;
+  case 9:
+    m_server = new ServerProxy1_9(this, m_stream, m_events);
     break;
   case 8:
     m_server = new ServerProxy1_8(this, m_stream, m_events);
@@ -643,6 +653,8 @@ void Client::handleShapeChanged()
 
 void Client::handleClipboardGrabbed(const Event &event)
 {
+  if (deskflow::clipboard::coreClipboardActive())
+    return;
   if (!m_enableClipboard || (m_maximumClipboardSize == 0)) {
     return;
   }

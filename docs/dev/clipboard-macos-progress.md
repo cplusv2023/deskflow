@@ -2,14 +2,14 @@
 
 更新日期：2026-10-15，Asia/Shanghai。
 
-`macos` 分支基于 `ubuntu` 的 `0f08f3111` 建立。Ubuntu 原有 M0–M2
+`macos` 分支基于 `ubuntu` 的 `0f08f3111` 建立，本轮已合并最新 `ea9190bcd`。Ubuntu 原有 M0–M2
 代码保留在同一原型目录，平台构建分别选择 X11 和 AppKit。本文记录 Mac
 侧真实完成范围，不将 Ubuntu 的 Files 结果当作 Finder 验收。
 
 目标见 [架构](clipboard-design.md)，跨端语义见
 [契约 v1 草案](clipboard-contract.md)。本分支的新共享服务位于
-[`src/lib/clipboard/`](../../src/lib/clipboard/README.md)，Ubuntu 分支需要合入后
-才能使用这些实现；旧模拟源尚未自动迁移到新服务。
+[`src/lib/clipboard/`](../../src/lib/clipboard/README.md)，两端统一使用 Ubuntu 的 FileTypes/LocalFileSource/LocalFileRpc；旧 Mac 泛型接口隔离在 experimental。
+Ubuntu 组需合入本轮集成提交，才能使用内嵌协议与 GUI。
 
 **Mac M0–M2 的基础验收现已通过**：macFUSE 5.4.0 的 FSKit 挂载、挂载后范围
 测试和 Finder 原生 Cmd+V 均已实测。Finder 复制了多文件、目录、空目录及
@@ -26,9 +26,9 @@
 完成实际 Ubuntu↔Mac 文件传输。此前对普通用户安装体验的顾虑保留为后续
 改进方向，不再阻塞首版。此次路线调整不新增或重跑测试。
 
-现有成果是可用的本机原型，尚非跨机可用产品：生成源→FUSE→Finder 粘贴
-已打通，但真实文件服务、Broker、文件投影和正式传输尚未连成完整链路。
-M0–M2 的已有结论不扩大为 M4/M5 已完成。
+本轮已把真实文件源、独立 TLS、FUSE 投影、AppKit/X11 提供器接入 core/GUI，完成编译。
+交付范围、启用步骤、固定线格式见 [内嵌首版指南](clipboard-core-v1.md)。
+未执行新增测试，尚无真实双机运行结果；M0–M2 历史结论不扩大为新链路 M5 验收通过。
 
 首版以文件复制为主要交付闭环：Ubuntu/Mac 任一端复制真实文件或目录，另一端
 通过本地文件入口正常粘贴，读取时才传输；源变更按已确认的 detectable 模式
@@ -64,8 +64,8 @@ receiver 代替 Finder 验收。Apple 的官方示例覆盖拖放路径。
 | M1 文件提供 | 基础验收通过；共享十个向量、短响应聚合、64 位范围及挂载后的随机/并发/EOF/目录读取通过；重复 Finder 复制 RSS 采样最大值 15536 KiB | 系统实际峰值 RSS 与更长时间负载待测；现有结果为定时采样 |
 | M2 Finder 接收 | 基础验收通过；原生 Cmd+V 复制多文件、目录、空文件、Unicode 名称和 256 MiB + 123 B 文件，哈希与权限通过；粘贴前正文请求为零 | 取消、预览开关对照及超过 4 GiB 整文件复制待测 |
 | M3 Mac 发送与格式 | AppKit 文本、HTML、PNG 延迟提供及读取；本机 TextEdit 纯文本发送、HTML 样式接收和 RTF→HTML 发送通过；Preview PNG 接收/发送逐像素一致；剪贴板文件列表到本地服务和超过 4 GiB 偏移通过 | 多应用、后台权限、跨机格式互通及完整格式边界仍待验证 |
-| M4 服务整合 | whole-offer 租约、固定目录、句柄、错误、预算、取消/断线、Broker 单测；Mac 独立进程 JSONL 调用通过 | Broker 与 AppKit/文件提供后端的完整组合、周期续租、正式网络通道与完整故障矩阵 |
-| M5 Deskflow 集成 | 尚未实现；主工程完整构建与 33 项安全回归通过，只证明现有代码及可选原型可共存 | 能力协商、认证会话绑定的数据连接、LegacyClipboardAdapter、core 生命周期及双机回归 |
+| M4 服务整合 | 保留历史组件验收；本轮收敛到 Ubuntu 公共服务，并接入 AppKit/FUSE、周期续租与独立 TLS，编译通过 | 新组合的实际运行与完整故障矩阵仍待验收 |
+| M5 Deskflow 集成 | 首版代码已接入：1.9 协商、主会话绑定 TLS、AppKit/X11 持续监听、FUSE 租约/桥接、GUI 开关/状态、断线清理；Mac 编译通过 | 本轮未运行测试；双机、新旧端兼容、故障矩阵和正式打包仍待验收 |
 
 真实文件模式已由用户明确选择：**允许 detectable，检测到修改即失败**。
 服务 API 仍默认 immutable，本地文件源不能保证不可变时返回
@@ -215,7 +215,9 @@ AppKit 的普通数据读取是同步调用，当前工具不声称可取消其 
 TIFF→PNG 像素与方向转换，以及拒绝嵌入内容和过大输入。以上属于 M3 的本机
 基本路径验证，不代表所有应用、后台权限或 Ubuntu↔Mac 格式互通已通过。
 
-## 后续协作与 M5 门槛
+## 历史集成计划与 M5 验收门槛
+
+下面保留此前计划背景；本轮实现状态和试用入口以 [内嵌首版指南](clipboard-core-v1.md) 为准。
 
 1. 以现有 FUSE 后端为首版基础，停止扩展本机可行性实验；File Provider、
    额外格式适配和性能调优后置。本轮仅依照已有结果确定范围，不运行测试。

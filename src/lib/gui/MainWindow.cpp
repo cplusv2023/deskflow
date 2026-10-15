@@ -272,6 +272,16 @@ void MainWindow::connectSlots()
   if (!deskflow::platform::isMac())
     connect(m_trayIcon, &QSystemTrayIcon::activated, this, &MainWindow::trayIconActivated);
 
+  auto *clipboardStatus = new QLabel(m_statusBar);
+  clipboardStatus->setMaximumWidth(360);
+  m_statusBar->addPermanentWidget(clipboardStatus);
+  connect(
+      &m_coreProcess, &CoreProcess::clipboardStatusChanged, clipboardStatus,
+      [clipboardStatus](const QString &text) {
+        clipboardStatus->setText(QObject::tr("Clipboard: %1").arg(text));
+        clipboardStatus->setToolTip(text);
+      }
+  );
   connect(&m_coreProcess, &CoreProcess::connectedClientsChanged, this, &MainWindow::serverClientsChanged);
   connect(&m_coreProcess, &CoreProcess::unrecognisedClient, this, &MainWindow::handleUnrecognisedClient);
   connect(&m_coreProcess, &CoreProcess::connectionRefused, this, &MainWindow::handleConnectionRefused);

@@ -52,6 +52,6 @@ add_subdirectory(deskflow-daemon) #Only used on windows
 add_subdirectory(deskflow-gui)
 
 option(BUILD_CLIPBOARD_PROTOTYPE "Build the experimental Linux/macOS clipboard and FUSE tools" OFF)
-if(BUILD_CLIPBOARD_PROTOTYPE)
+if(BUILD_CLIPBOARD_PROTOTYPE OR BUILD_CLIPBOARD_FILES)
   add_subdirectory(clipboard-prototype)
 endif()

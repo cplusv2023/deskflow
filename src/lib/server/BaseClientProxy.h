@@ -82,6 +82,10 @@ public:
   virtual void secureInputNotification(const std::string &app) const = 0;
   std::string getName() const override;
   virtual deskflow::IStream *getStream() const = 0;
+  virtual void startClipboard();
+  virtual void stopClipboard()
+  {
+  }
 
 private:
   std::string m_name;

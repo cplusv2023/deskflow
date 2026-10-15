@@ -5,145 +5,141 @@
  */
 #pragma once
 
+#include "FileTypes.h"
+
+#include <cstddef>
 #include <cstdint>
-#include <optional>
+#include <memory>
 #include <string>
-#include <unordered_map>
 #include <vector>
 
 namespace deskflow::clipboard {
 
-// Identity and advertised formats only. Payloads, file leases, and retained old
-// offers belong to the caller/FileService, not to the current-clipboard broker.
-// origin includes the source process epoch; sequence is monotonic within it.
-struct ClipboardAnnouncement
+enum class OfferDirection
 {
-  std::string offerId;
-  std::string offerVersion;
-  std::string origin;
-  std::uint64_t sequence{0};
-  std::vector<std::string> formats;
-  bool operator==(const ClipboardAnnouncement &) const = default;
+  Local,
+  Remote
 };
 
-struct PublicationMarker
+// revision is monotonic for this origin in the authenticated session. A future
+// multi-peer server adapter additionally assigns the global wire revision.
+struct OfferAnnouncement
 {
-  std::string token;
+  OfferInfo offer;
+  std::string originId;
   std::uint64_t revision{0};
-  bool operator==(const PublicationMarker &) const = default;
+  OfferDirection direction{OfferDirection::Remote};
 };
 
-struct PublicationTicket
+// ownerId comes from the clipboard backend's actual owner identity, not from a
+// MIME payload alone. publicationToken is a correlation marker, not a secret.
+struct ClipboardOwner
 {
-  ClipboardAnnouncement announcement;
-  PublicationMarker marker;
-  bool operator==(const PublicationTicket &) const = default;
+  std::string ownerId;
+  std::string originId;
+  std::string publicationToken;
 };
 
-enum class BrokerStatus
-{
-  Accepted,
-  Duplicate,
-  OwnPublication,
-  LocalOrigin,
-  OutOfOrder,
-  StalePublication,
-  InvalidAnnouncement,
-  Disconnected,
-  ResourceLimit,
-  BackendFailure
-};
-
-struct RemoteAnnouncementResult
-{
-  BrokerStatus status;
-  std::optional<PublicationTicket> publication;
-};
-
-struct LocalObservationResult
-{
-  BrokerStatus status;
-  std::optional<ClipboardAnnouncement> announcement;
-};
-
-struct BrokerLimits
-{
-  std::uint32_t maxOrigins{256};
-  std::uint32_t maxFormats{64};
-  std::uint32_t maxMetadataBytes{65536};
-};
-
-// Called synchronously on the platform clipboard's owner thread. The adapter
-// writes marker with the representations and returns their resulting generation
-// (e.g. NSPasteboard changeCount), or nullopt on failure. It must not call back
-// into the broker. Snapshot/observation callbacks are queued after publication.
-// A file adapter must prepare its projection and acquire the whole-offer lease
-// before this call. An empty format list represents an empty clipboard.
-class ClipboardBackend
-{
-public:
-  virtual ~ClipboardBackend() = default;
-  virtual std::optional<std::uint64_t>
-  publish(const ClipboardAnnouncement &announcement, const PublicationMarker &marker) noexcept = 0;
-};
-
-// All methods, including backend publication, run on one caller-owned serial
-// executor (on macOS, the AppKit owner thread). Network/file workers post their
-// results there. This class does not create threads, run I/O, or own a backend.
-// In particular, do not check a ticket on one thread and write the clipboard on
-// another: publishIfCurrent makes the check and synchronous write one operation.
-//
-// One instance is used for one connected session. disconnect() is terminal;
-// reconnect creates a new instance, with fresh session/publication identity.
 class ClipboardBroker
 {
 public:
-  // localOrigin must include a process epoch; publicationToken is a fresh opaque
-  // nonce supplied by the platform, never a content hash or a stable device ID.
-  ClipboardBroker(std::string localOrigin, std::string publicationToken, BrokerLimits limits = {});
-
-  RemoteAnnouncementResult receiveRemote(ClipboardAnnouncement announcement);
-  BrokerStatus publishIfCurrent(const PublicationTicket &ticket, ClipboardBackend &backend);
-
-  // A complete platform snapshot. Same content at a new generation is a new
-  // copy operation. An echoed marker alone does not prove our own publication.
-  LocalObservationResult observeLocal(
-      std::uint64_t generation, std::optional<PublicationMarker> marker, std::string offerId, std::string offerVersion,
-      std::vector<std::string> formats
-  );
-
-  // Invalidates pending work and current selection without writing the platform
-  // clipboard or releasing old leases. Origin high-water marks remain intact.
-  // Retaining old leases is necessary for directory copies still in progress.
-  void clear();
-  void disconnect();
-
-  const std::optional<ClipboardAnnouncement> &current() const;
-  std::uint64_t revision() const;
-  bool connected() const;
-
-private:
-  struct PublishedClipboard
+  struct Options
   {
-    PublicationMarker marker;
-    std::uint64_t generation;
+    std::string localOriginId;
+    std::string ownerId;
+    std::size_t maxRetainedOffers{32};
+    std::size_t maxPendingAcquires{16};
+    std::size_t maxEntriesPerOffer{4096};
+    std::size_t maxRootsPerOffer{64};
+    // Aggregate logical manifest storage, including strings and FileInfo slots.
+    // Action lists hold shared immutable references, not further manifest copies.
+    std::size_t maxManifestBytes{4 * 1024 * 1024};
+    // Bound replay bookkeeping too. Exhaustion requires a new broker instance.
+    std::size_t maxAnnouncementsPerSession{4096};
+    std::size_t maxSessionEpochs{256};
+    std::size_t maxIdentifierBytes{256};
+    std::uint32_t requestedTtlMs{30000};
   };
 
-  bool valid(const ClipboardAnnouncement &announcement) const;
-  bool canAdvance() const;
-  void advance();
+  enum class ActionKind
+  {
+    Announce,
+    AcquireLease,
+    Publish,
+    RenewLease,
+    ReleaseLease,
+    RetirePublication,
+    CancelAcquire
+  };
 
-  std::string m_localOrigin;
-  std::string m_publicationToken;
-  BrokerLimits m_limits;
-  bool m_connected{true};
-  std::uint64_t m_revision{0};
-  std::uint64_t m_localSequence{0};
-  std::unordered_map<std::string, std::uint64_t> m_remoteSequences;
-  std::optional<ClipboardAnnouncement> m_current;
-  std::optional<PublicationTicket> m_pending;
-  std::optional<PublishedClipboard> m_published;
-  std::optional<std::uint64_t> m_lastObservedGeneration;
+  struct Action
+  {
+    ActionKind kind;
+    std::shared_ptr<const OfferAnnouncement> announcement;
+    std::uint64_t selectionRevision{0};
+    // Broker correlation ID for AcquireLease/CancelAcquire only. The transport
+    // allocates fresh wire request IDs for every renewal/release and correlates
+    // their responses before calling completeRenew.
+    std::string requestId;
+    std::string leaseId;
+    ClipboardOwner owner;
+    std::uint32_t requestedTtlMs{0};
+    std::uint32_t grantedTtlMs{0};
+  };
+
+  struct Result
+  {
+    Status status{Status::Ok};
+    bool ignored{false};
+    std::vector<Action> actions;
+  };
+
+  struct Publication
+  {
+    std::shared_ptr<const OfferAnnouncement> announcement;
+    std::uint64_t selectionRevision{0};
+    std::string leaseId;
+    ClipboardOwner owner;
+    std::uint32_t grantedTtlMs{0};
+  };
+
+  explicit ClipboardBroker(Options options);
+  ~ClipboardBroker();
+  ClipboardBroker(const ClipboardBroker &) = delete;
+  ClipboardBroker &operator=(const ClipboardBroker &) = delete;
+
+  // Single-dispatcher actor: serialize all methods and apply returned actions on
+  // that dispatcher. No method calls platform code, network code, or callbacks.
+  // This M4 component owns one authenticated peer session, not a server topology.
+  Result beginSession(const std::string &sessionEpoch, const std::string &peerOriginId);
+  Result closeSession(const std::string &sessionEpoch);
+
+  // External owner events always make a fresh announcement, even for identical
+  // content. Source offers must have new identities and the active session epoch.
+  Result observeLocal(OfferInfo offer, const ClipboardOwner &owner);
+  Result receiveRemote(OfferAnnouncement announcement);
+  Result completeAcquire(const std::string &sessionEpoch, const std::string &requestId, const LeaseResult &result);
+
+  // Before an asynchronous backend finally claims ownership, recheck this guard
+  // on the dispatcher. A superseded Publish action must be completed CANCELLED.
+  bool canPublish(const std::string &publicationToken) const;
+  Result completePublication(const std::string &publicationToken, Status status);
+  Result releasePublication(const std::string &publicationToken);
+
+  // A timer in the runtime requests renewal for ALL retained publications,
+  // including old directories without currently open handles. It owns deadlines.
+  Result renewPublications() const;
+  Result completeRenew(const std::string &publicationToken, const LeaseResult &result);
+
+  std::shared_ptr<const OfferAnnouncement> currentOffer() const;
+  std::vector<Publication> retainedPublications() const;
+  std::size_t retainedOfferCount() const;
+  std::size_t pendingAcquireCount() const;
+  std::size_t retainedManifestBytes() const;
+
+private:
+  struct Impl;
+  std::unique_ptr<Impl> m_impl;
 };
 
 } // namespace deskflow::clipboard

@@ -17,7 +17,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-using namespace deskflow::clipboard;
+using namespace deskflow::clipboard::experimental;
 using namespace std::chrono_literals;
 
 namespace {

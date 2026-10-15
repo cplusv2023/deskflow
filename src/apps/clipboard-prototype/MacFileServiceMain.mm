@@ -4,8 +4,8 @@
  * SPDX-License-Identifier: GPL-2.0-only WITH LicenseRef-OpenSSL-Exception
  */
 
-#include "clipboard/FileService.h"
-#include "clipboard/LocalFileSource.h"
+#include "clipboard/experimental/FileService.h"
+#include "clipboard/experimental/LocalFileSource.h"
 
 #import <AppKit/AppKit.h>
 
@@ -21,7 +21,7 @@
 
 namespace {
 
-using namespace deskflow::clipboard;
+using namespace deskflow::clipboard::experimental;
 constexpr std::size_t kMaxLineBytes = 1024 * 1024;
 constexpr std::size_t kMaxInputPaths = 512;
 constexpr std::size_t kMaxSelectionBytes = 64 * 1024;

@@ -10,7 +10,7 @@
 #include <limits>
 #include <stdexcept>
 
-namespace deskflow::clipboard {
+namespace deskflow::clipboard::experimental {
 
 namespace {
 constexpr std::size_t maxIdentifierBytes = 256;
@@ -641,4 +641,4 @@ Usage FileService::usage()
   return m_usage;
 }
 
-} // namespace deskflow::clipboard
+} // namespace deskflow::clipboard::experimental

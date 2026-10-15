@@ -59,3 +59,7 @@ For the proposed clipboard extension, see the [on-demand clipboard goals and arc
 The [macOS implementation and validation record](clipboard-macos-progress.md) tracks the `macos` branch, including its Finder and integration gates.
 
 Cross-platform semantics and shared fixtures are described in the [clipboard interface contract draft](clipboard-contract.md) (Chinese).
+
+The next core integration steps and their acceptance gates are tracked in the [clipboard M5 integration plan](clipboard-m5-integration.md) (Chinese).
+
+- [内嵌剪贴板首版：构建、使用与冻结协议](clipboard-core-v1.md)

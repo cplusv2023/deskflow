@@ -25,6 +25,10 @@
 #include <memory>
 #include <openssl/err.h>
 #include <openssl/ssl.h>
+#ifndef _WIN32
+#include <netdb.h>
+#include <sys/socket.h>
+#endif
 
 //
 // SecureSocket
@@ -435,6 +439,7 @@ int SecureSocket::secureAccept(int socket)
       disconnect();
       return -1; // Fail
     }
+    m_peerAuthenticated = m_securityLevel == SecurityLevel::PeerAuth;
     m_secureReady = true;
     LOG_INFO("accepted secure socket");
     SslLogger::logSecureCipherInfo(m_ssl->m_ssl);
@@ -504,6 +509,7 @@ int SecureSocket::secureConnect(int socket)
     disconnect();
     return -1; // Fingerprint failed, error
   }
+  m_peerAuthenticated = true;
   LOG_VERBOSE("connected secure socket");
   SslLogger::logSecureCipherInfo(m_ssl->m_ssl);
   SslLogger::logSecureConnectInfo(m_ssl->m_ssl);
@@ -737,4 +743,33 @@ void SecureSocket::handleTCPConnected(const Event &)
     return;
   }
   secureConnect();
+}
+
+std::optional<deskflow::ClipboardBinding> SecureSocket::clipboardBinding()
+{
+#ifndef _WIN32
+  std::scoped_lock lock{ssl_mutex_};
+  if (!m_secureReady || !m_peerAuthenticated || !m_ssl || !m_ssl->m_ssl || m_fatal)
+    return std::nullopt;
+  deskflow::ClipboardBinding binding;
+  constexpr char label[] = "EXPORTER-Deskflow-Clipboard-v1";
+  if (SSL_export_keying_material(
+          m_ssl->m_ssl, binding.secret.data(), binding.secret.size(), label, sizeof(label) - 1, nullptr, 0, 0
+      ) != 1)
+    return std::nullopt;
+  X509 *cert = SSL_get1_peer_certificate(m_ssl->m_ssl);
+  unsigned int size = 0;
+  const bool valid = cert && X509_digest(cert, EVP_sha256(), binding.peerFingerprint.data(), &size) == 1 && size == 32;
+  X509_free(cert);
+  sockaddr_storage address{};
+  socklen_t length = sizeof(address);
+  char host[NI_MAXHOST]{};
+  if (!valid || getpeername(SSL_get_fd(m_ssl->m_ssl), reinterpret_cast<sockaddr *>(&address), &length) != 0 ||
+      getnameinfo(reinterpret_cast<sockaddr *>(&address), length, host, sizeof(host), nullptr, 0, NI_NUMERICHOST) != 0)
+    return std::nullopt;
+  binding.peerAddress = host;
+  return binding;
+#else
+  return std::nullopt;
+#endif
 }

@@ -16,7 +16,7 @@
 #include <unordered_set>
 #include <vector>
 
-namespace deskflow::clipboard {
+namespace deskflow::clipboard::experimental {
 
 enum class Status
 {
@@ -244,4 +244,4 @@ private:
 // adapters must call this before returning data to a filesystem consumer.
 Status validateReadResult(const ReadResult &result, const ReadResult &expected, std::uint64_t fixedSize);
 
-} // namespace deskflow::clipboard
+} // namespace deskflow::clipboard::experimental

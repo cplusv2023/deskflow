@@ -4,6 +4,8 @@
  * SPDX-License-Identifier: GPL-2.0-only WITH LicenseRef-OpenSSL-Exception
  */
 
+#include "ParentWatch.h"
+
 #include "MacClipboard.h"
 
 #import <Foundation/Foundation.h>
@@ -92,6 +94,8 @@ int run(int argc, char **argv)
       }
     } else if (!positional && argument == "--log") {
       options.logPath = value(i, argc, argv);
+    } else if (!positional && argument == "--expected-change-count") {
+      options.expectedChangeCount = std::stoll(value(i, argc, argv));
     } else if (!positional && argument == "--origin") {
       options.origin = value(i, argc, argv);
       if (options.origin.empty() || options.origin.size() > 256) {
@@ -157,6 +161,7 @@ int main(int argc, char **argv)
   @autoreleasepool {
     @try {
       try {
+        deskflow::clipboard::prototype::ParentWatch parent(argc, argv);
         return run(argc, argv);
       } catch (const std::exception &error) {
         std::cerr << "deskflow-clipboard-probe: " << error.what() << '\n';

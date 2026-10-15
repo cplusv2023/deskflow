@@ -18,6 +18,7 @@ struct MacClipboardOptions
   std::string pasteboard;
   std::string logPath;
   std::string origin;
+  std::optional<long long> expectedChangeCount;
   int durationMs = 0;
   int pollMs = 100;
 };

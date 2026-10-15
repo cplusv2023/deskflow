@@ -510,6 +510,8 @@ int publishMacFiles(const std::vector<std::string> &paths, const MacClipboardOpt
     Logger logger(options.logPath, std::cout);
     NSPasteboard *board = pasteboard(options);
     NSString *origin = publisherOrigin(options);
+    if (options.expectedChangeCount && board.changeCount != *options.expectedChangeCount)
+      throw std::runtime_error("OWNER_CHANGED: newer local copy superseded publication");
     [board prepareForNewContentsWithOptions:NSPasteboardContentsCurrentHostOnly];
     if (![board writeObjects:urls]) {
       throw std::runtime_error("AppKit rejected file URL publication");
@@ -554,6 +556,8 @@ int publishMacData(const std::vector<MacClipboardRepresentation> &representation
       throw std::runtime_error("AppKit rejected lazy representation provider");
     }
     NSPasteboard *board = pasteboard(options);
+    if (options.expectedChangeCount && board.changeCount != *options.expectedChangeCount)
+      throw std::runtime_error("OWNER_CHANGED: newer local copy superseded publication");
     [board prepareForNewContentsWithOptions:NSPasteboardContentsCurrentHostOnly];
     if (![board writeObjects:@[ item ]]) {
       throw std::runtime_error("AppKit rejected representation publication");
@@ -572,7 +576,11 @@ int readMacClipboard(
   @autoreleasepool {
     Logger logger(options.logPath, std::cerr);
     NSPasteboard *board = pasteboard(options);
+    if (!options.origin.empty() && [[board stringForType:kOriginType] isEqualToString:nativeString(options.origin)])
+      throw std::runtime_error("SELF_ORIGIN: refusing to recapture this core's publication");
     const NSInteger changeCount = board.changeCount;
+    if (options.expectedChangeCount && changeCount != *options.expectedChangeCount)
+      throw std::runtime_error("OWNER_CHANGED: capture generation changed");
     NSData *data = nil;
     if (target == "text/uri-list") {
       NSArray<NSPasteboardItem *> *items = board.pasteboardItems;

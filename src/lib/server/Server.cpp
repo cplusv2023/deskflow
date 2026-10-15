@@ -6,6 +6,8 @@
  * SPDX-License-Identifier: GPL-2.0-only WITH LicenseRef-OpenSSL-Exception
  */
 
+#include "clipboard/CoreClipboard.h"
+
 #include "server/Server.h"
 
 #include "base/IEventQueue.h"
@@ -272,6 +274,13 @@ void Server::adoptClient(BaseClientProxy *client)
 
   // send configuration options to client
   sendOptions(client);
+
+  // First release supports exactly one remote computer. Mixed peers keep legacy clipboard.
+  if (m_clients.size() == 2 && m_enableClipboard && m_maximumClipboardSize)
+    client->startClipboard();
+  else
+    for (const auto &[name, peer] : m_clients)
+      peer->stopClipboard();
 
   // activate computer saver on new client if active on the primary computer
   if (m_activeSaver != nullptr) {
@@ -1110,11 +1119,15 @@ void Server::processOptions()
     } else if (id == kOptionClipboardSharing) {
       m_enableClipboard = value;
       if (!m_enableClipboard) {
+        for (const auto &[name, peer] : m_clients)
+          peer->stopClipboard();
         LOG_INFO("clipboard sharing is disabled");
       }
     } else if (id == kOptionClipboardSharingSize) {
       if (value <= 0) {
         m_maximumClipboardSize = 0;
+        for (const auto &[name, peer] : m_clients)
+          peer->stopClipboard();
         LOG_INFO(
             "clipboard sharing is disabled because the "
             "maximum shared clipboard size is set to 0"
@@ -1163,6 +1176,8 @@ void Server::handleShapeChanged(BaseClientProxy *client)
 
 void Server::handleClipboardGrabbed(const Event &event, BaseClientProxy *grabber)
 {
+  if (deskflow::clipboard::coreClipboardActive())
+    return;
   if (!m_enableClipboard || (m_maximumClipboardSize == 0)) {
     return;
   }
@@ -1215,6 +1230,8 @@ void Server::handleClipboardGrabbed(const Event &event, BaseClientProxy *grabber
 
 void Server::handleClipboardChanged(const Event &event, BaseClientProxy *client)
 {
+  if (deskflow::clipboard::coreClipboardActive())
+    return;
   // ignore events from unknown clients
   if (!m_clientSet.contains(client)) {
     return;
@@ -1922,6 +1939,7 @@ bool Server::addClient(BaseClientProxy *client)
 
 bool Server::removeClient(BaseClientProxy *client)
 {
+  client->stopClipboard();
   using enum EventTypes;
   // return false if not in list
   ClientSet::iterator i = m_clientSet.find(client);
@@ -1943,6 +1961,7 @@ bool Server::removeClient(BaseClientProxy *client)
 
 void Server::closeClient(BaseClientProxy *client, const char *msg)
 {
+  client->stopClipboard();
   assert(client != m_primaryClient);
   assert(msg != nullptr);
 

@@ -81,6 +81,7 @@ public:
   }
 
 Q_SIGNALS:
+  void clipboardStatusChanged(const QString &status);
   void error(deskflow::gui::CoreProcess::Error error);
   void logLine(const QString &line);
   void connectionStateChanged(deskflow::core::ConnectionState state);

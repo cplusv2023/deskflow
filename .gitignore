@@ -25,6 +25,10 @@ deskflow-config.toml
 /*.user
 *.ui.autosave
 
+# Python test bytecode
+__pycache__/
+*.py[cod]
+
 #Qt creator 18 user files
 /.qtcreator
 

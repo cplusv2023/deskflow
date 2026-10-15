@@ -5,9 +5,11 @@
  * SPDX-License-Identifier: GPL-2.0-only WITH LicenseRef-OpenSSL-Exception
  */
 
-#include "deskflow/Computer.h"
+#include "clipboard/CoreClipboard.h"
+
 #include "base/IEventQueue.h"
 #include "base/Log.h"
+#include "deskflow/Computer.h"
 #include "deskflow/IPlatformComputer.h"
 
 #include <QProcess>
@@ -206,11 +208,15 @@ void Computer::warpCursor(int32_t x, int32_t y)
 
 void Computer::setClipboard(ClipboardID id, const IClipboard *clipboard)
 {
+  if (deskflow::clipboard::coreClipboardActive())
+    return;
   m_computer->setClipboard(id, clipboard);
 }
 
 void Computer::grabClipboard(ClipboardID id)
 {
+  if (deskflow::clipboard::coreClipboardActive())
+    return;
   m_computer->setClipboard(id, nullptr);
 }
 
@@ -396,6 +402,8 @@ void *Computer::getEventTarget() const
 
 bool Computer::getClipboard(ClipboardID id, IClipboard *clipboard) const
 {
+  if (deskflow::clipboard::coreClipboardActive())
+    return false;
   return m_computer->getClipboard(id, clipboard);
 }
 

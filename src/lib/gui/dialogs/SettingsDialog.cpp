@@ -32,6 +32,17 @@ SettingsDialog::SettingsDialog(QWidget *parent, const ServerConfig &serverConfig
 {
 
   ui->setupUi(this);
+  m_fileClipboard = new QCheckBox(tr("Share files with macOS / Ubuntu (experimental)"), this);
+  m_fileClipboard->setEnabled(Settings::isWritable());
+  m_fileClipboard->setToolTip(
+      tr("Requires this build on both computers, TLS with client certificate verification, and macFUSE FSKit / FUSE3. "
+         "Ubuntu X11 only. Restart the connection after changing this setting.")
+  );
+#ifndef DESKFLOW_CLIPBOARD_FILES
+  m_fileClipboard->setEnabled(false);
+  m_fileClipboard->setToolTip(tr("This build does not include file clipboard support."));
+#endif
+  layout()->addWidget(m_fileClipboard);
   layout()->addWidget(m_buttonBox);
   ui->tabWidget->setCurrentIndex(0);
 
@@ -96,6 +107,7 @@ void SettingsDialog::changeEvent(QEvent *e)
 
 void SettingsDialog::initConnections() const
 {
+  connect(m_fileClipboard, &QCheckBox::toggled, this, &SettingsDialog::setButtonBoxEnabledButtons);
   connect(m_buttonBox, &SettingsDialogButtonBox::accepted, this, &SettingsDialog::accept);
   connect(m_buttonBox, &SettingsDialogButtonBox::rejected, this, &QDialog::reject);
   connect(m_buttonBox, &SettingsDialogButtonBox::reset, this, &SettingsDialog::loadFromConfig);
@@ -220,6 +232,7 @@ void SettingsDialog::updateText()
 
 void SettingsDialog::accept()
 {
+  Settings::setValue(Settings::Core::FileClipboard, m_fileClipboard->isChecked());
   Settings::setValue(Settings::Core::Port, ui->sbPort->value());
   Settings::setValue(Settings::Core::Interface, ui->comboInterface->currentData());
   Settings::setValue(Settings::Log::Level, ui->comboLogLevel->currentData());
@@ -255,6 +268,7 @@ void SettingsDialog::accept()
 
 void SettingsDialog::loadFromConfig()
 {
+  m_fileClipboard->setChecked(Settings::value(Settings::Core::FileClipboard).toBool());
   ui->sbPort->setValue(Settings::value(Settings::Core::Port).toInt());
   ui->comboLogLevel->setCurrentIndex(
       ui->comboLogLevel->findData(Settings::logLevelText(), Qt::UserRole, Qt::MatchFixedString)
@@ -423,6 +437,7 @@ bool SettingsDialog::isModified() const
   const bool ignoreInterface = !m_interfaceSetOnLoad && (ui->comboInterface->currentIndex() == 0);
 
   bool modified =
+      (m_fileClipboard->isChecked() != Settings::value(Settings::Core::FileClipboard).toBool()) ||
       (ui->sbPort->value() != Settings::value(Settings::Core::Port).toInt()) ||
       (ui->comboLogLevel->currentData() != Settings::logLevelText()) ||
       (ui->groupLogToFile->isChecked() != Settings::value(Settings::Log::ToFile).toBool()) ||
@@ -458,6 +473,7 @@ bool SettingsDialog::isDefault() const
       static_cast<int>(LogLevel::fromOption(Settings::defaultValue(Settings::Log::Level).toString()));
 
   return (
+      (m_fileClipboard->isChecked() == Settings::defaultValue(Settings::Core::FileClipboard).toBool()) &&
       (ui->sbPort->value() == Settings::defaultValue(Settings::Core::Port).toInt()) &&
       (ui->comboLogLevel->currentIndex() == logLevelIndex) &&
       (ui->groupLogToFile->isChecked() == Settings::defaultValue(Settings::Log::ToFile).toBool()) &&
@@ -486,6 +502,7 @@ bool SettingsDialog::isDefault() const
 
 void SettingsDialog::resetToDefault()
 {
+  m_fileClipboard->setChecked(Settings::defaultValue(Settings::Core::FileClipboard).toBool());
   ui->sbPort->setValue(Settings::defaultValue(Settings::Core::Port).toInt());
   ui->comboLogLevel->setCurrentIndex(
       static_cast<int>(LogLevel::fromOption(Settings::defaultValue(Settings::Log::Level).toString()))

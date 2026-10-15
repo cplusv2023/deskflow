@@ -7,6 +7,7 @@
  */
 
 #pragma once
+class QCheckBox;
 #include <QDialog>
 
 #include "gui/config/ServerConfig.h"
@@ -84,6 +85,7 @@ private:
   void setButtonBoxEnabledButtons() const;
 
   bool m_interfaceSetOnLoad = false;
+  QCheckBox *m_fileClipboard = nullptr;
   std::unique_ptr<Ui::SettingsDialog> ui;
   const ServerConfig &m_serverConfig;
   SettingsDialogButtonBox *m_buttonBox = nullptr;

@@ -36,6 +36,10 @@ public:
   // These all just forward to the underlying stream except getEventTarget.
   // Override as necessary.  getEventTarget returns a pointer to this.
   void close() override;
+  std::optional<deskflow::ClipboardBinding> clipboardBinding() override
+  {
+    return getStream()->clipboardBinding();
+  }
   uint32_t read(void *buffer, uint32_t n) override;
   void write(const void *buffer, uint32_t n) override;
   void flush() override;

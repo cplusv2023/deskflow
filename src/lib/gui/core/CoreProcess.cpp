@@ -172,6 +172,7 @@ void CoreProcess::checkExistingProcess()
 
 void CoreProcess::onProcessFinished(int exitCode, QProcess::ExitStatus)
 {
+  Q_EMIT clipboardStatusChanged(tr("Disconnected"));
   using enum ProcessState;
   setConnectionState(ConnectionState::Disconnected);
 
@@ -638,6 +639,8 @@ void CoreProcess::onCoreIpcMessageReceived(const QString &command, const QString
   } else if (command == "connectedClients") {
     const auto clients = args.isEmpty() ? QStringList() : args.split(",");
     Q_EMIT connectedClientsChanged(clients);
+  } else if (command == "clipboardStatus") {
+    Q_EMIT clipboardStatusChanged(args);
   } else if (command == "secureSocket") {
     Q_EMIT secureSocket(true);
     if (args != m_secureSocketVersion) {

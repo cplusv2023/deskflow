@@ -45,6 +45,7 @@ public:
 
   // ISocket overrides
   void close() override;
+  std::optional<deskflow::ClipboardBinding> clipboardBinding() override;
 
   // IDataSocket overrides
   void connect(const NetworkAddress &) override;
@@ -94,6 +95,7 @@ private:
 
   std::unique_ptr<Ssl> m_ssl;
   bool m_secureReady = false;
+  bool m_peerAuthenticated = false;
   bool m_fatal = false;
   SecurityLevel m_securityLevel = SecurityLevel::Encrypted;
 

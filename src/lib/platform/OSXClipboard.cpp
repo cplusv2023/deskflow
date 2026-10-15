@@ -138,6 +138,12 @@ bool OSXClipboard::has(Format format) const
 
   PasteboardItemID item;
   PasteboardGetItemIdentifier(m_pboard, (CFIndex)1, &item);
+#ifdef DESKFLOW_CLIPBOARD_FILES
+  // File references have no safe legacy text fallback.
+  PasteboardFlavorFlags fileFlags;
+  if (PasteboardGetItemFlavorFlags(m_pboard, item, CFSTR("public.file-url"), &fileFlags) == noErr)
+    return false;
+#endif
 
   for (ConverterList::const_iterator index = m_converters.begin(); index != m_converters.end(); ++index) {
     IOSXClipboardConverter *converter = *index;

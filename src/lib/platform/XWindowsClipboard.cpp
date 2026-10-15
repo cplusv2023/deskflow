@@ -476,6 +476,16 @@ void XWindowsClipboard::icccmFillCache()
   const uint32_t numTargets = data.size() / sizeof(Atom);
   LOG_DEBUG("  available targets: %s", XWindowsUtil::atomsToString(m_display, targets, numTargets).c_str());
 
+#ifdef DESKFLOW_CLIPBOARD_FILES
+  // Never send local source or FUSE mount paths to a legacy peer as text.
+  for (const char *name : {"text/uri-list", "x-special/gnome-copied-files", "application/x-gnome-copied-files"}) {
+    const auto fileTarget = XInternAtom(m_display, name, False);
+    for (uint32_t i = 0; i < numTargets; ++i)
+      if (targets[i] == fileTarget)
+        return;
+  }
+#endif
+
   // try each converter in order (because they're in order of
   // preference).
   for (ConverterList::const_iterator index = m_converters.begin(); index != m_converters.end(); ++index) {
@@ -707,6 +717,16 @@ void XWindowsClipboard::motifFillCache()
     // save it
     motifFormats.try_emplace(motifFormat.m_type, data);
   }
+
+#ifdef DESKFLOW_CLIPBOARD_FILES
+  // Never send local source or FUSE mount paths to a legacy peer as text.
+  for (const char *name : {"text/uri-list", "x-special/gnome-copied-files", "application/x-gnome-copied-files"}) {
+    const auto fileTarget = XInternAtom(m_display, name, False);
+    for (uint32_t i = 0; i < numTargets; ++i)
+      if (targets[i] == fileTarget)
+        return;
+  }
+#endif
 
   // try each converter in order (because they're in order of
   // preference).

@@ -5,242 +5,448 @@
  */
 #include "ClipboardBroker.h"
 
+#include <algorithm>
+#include <functional>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 using namespace deskflow::clipboard;
 
 namespace {
 
-void check(bool condition, const std::string &message)
+using Kind = ClipboardBroker::ActionKind;
+using Result = ClipboardBroker::Result;
+
+void check(bool value, const std::string &message)
 {
-  if (!condition) {
+  if (!value)
     throw std::runtime_error(message);
-  }
 }
 
-ClipboardAnnouncement remote(std::string id, std::uint64_t sequence, std::string origin = "ubuntu/process-1")
+void expect(Status actual, Status expected, const std::string &message)
 {
-  return {std::move(id), "version-1", std::move(origin), sequence, {"text/plain"}};
-}
-
-class RecordingBackend final : public ClipboardBackend
-{
-public:
-  std::optional<std::uint64_t>
-  publish(const ClipboardAnnouncement &announcement, const PublicationMarker &marker) noexcept override
-  {
-    ++calls;
-    if (fail) {
-      return std::nullopt;
-    }
-    lastOffer = announcement;
-    lastMarker = marker;
-    return ++generation;
-  }
-
-  bool fail{false};
-  unsigned calls{0};
-  std::uint64_t generation{100};
-  std::optional<ClipboardAnnouncement> lastOffer;
-  std::optional<PublicationMarker> lastMarker;
-};
-
-void asyncPublicationOrdering()
-{
-  ClipboardBroker broker("mac/process-1", "publication-nonce");
-  RecordingBackend backend;
-  const auto a = broker.receiveRemote(remote("A", 10));
-  const auto b = broker.receiveRemote(remote("B", 11));
-  check(a.publication && b.publication, "new offers must create preparation tickets");
-
-  // A's lease response arrives after B. Rejection must happen BEFORE any
-  // clipboard write, not as a check on an already completed publication.
-  check(broker.publishIfCurrent(*a.publication, backend) == BrokerStatus::StalePublication, "reject delayed A");
-  check(backend.calls == 0, "stale completion must not touch the clipboard");
-  check(broker.publishIfCurrent(*b.publication, backend) == BrokerStatus::Accepted, "publish current B");
-  check(backend.lastOffer->offerId == "B", "clipboard contains B");
-  check(broker.publishIfCurrent(*b.publication, backend) == BrokerStatus::StalePublication, "ticket is single use");
-  check(backend.calls == 1, "duplicate completion must not republish");
-
-  const auto c = broker.receiveRemote(remote("C", 12));
-  auto forged = *c.publication;
-  forged.announcement.offerId = "unprepared-file";
-  check(broker.publishIfCurrent(forged, backend) == BrokerStatus::StalePublication, "ticket binds the complete offer");
-  check(backend.calls == 1, "changed ticket must not reach backend");
-
-  const auto local = broker.observeLocal(102, std::nullopt, "local-copy", "v1", {"text/plain"});
-  check(local.status == BrokerStatus::Accepted, "local copy supersedes pending remote offer");
-  check(broker.publishIfCurrent(*c.publication, backend) == BrokerStatus::StalePublication, "local copy wins over C");
-  check(broker.current()->offerId == "local-copy", "current offer remains local");
-}
-
-void publicationEchoAndUserCopies()
-{
-  ClipboardBroker broker("mac/process-1", "publication-nonce");
-  RecordingBackend backend;
-  const auto a = broker.receiveRemote(remote("A", 1));
-  check(broker.publishIfCurrent(*a.publication, backend) == BrokerStatus::Accepted, "publish A");
-  const auto marker = backend.lastMarker;
-  const auto generation = backend.generation;
-
-  // B may be preparing while the backend reports its earlier write of A.
-  // Observing A's own write must neither echo it nor invalidate B's ticket.
-  const auto b = broker.receiveRemote(remote("B", 2));
-  const auto own = broker.observeLocal(generation, marker, "captured-A", "v1", {"text/plain"});
-  check(own.status == BrokerStatus::OwnPublication && !own.announcement, "suppress our matching marker/generation");
-  check(broker.current()->offerId == "B", "own observation does not supersede pending B");
-  check(broker.publishIfCurrent(*b.publication, backend) == BrokerStatus::Accepted, "B still publishable");
-
-  // Some applications carry custom representations when copying. A preserved
-  // token at a new generation must be treated as a new user copy.
-  const auto user = broker.observeLocal(backend.generation + 1, backend.lastMarker, "user-copy", "v1", {"text/plain"});
-  check(user.status == BrokerStatus::Accepted && user.announcement->sequence == 1, "copied token is not our write");
-  const auto repeated = broker.observeLocal(backend.generation + 1, std::nullopt, "ignored-id", "v1", {"text/plain"});
-  check(repeated.status == BrokerStatus::Duplicate, "polling the same generation must not create another offer");
-  const auto sameContent =
-      broker.observeLocal(backend.generation + 2, std::nullopt, "user-copy-2", "v1", {"text/plain"});
   check(
-      sameContent.status == BrokerStatus::Accepted && sameContent.announcement->sequence == 2, "new copy gets sequence"
-  );
-
-  ClipboardBroker wrongToken("mac/process-2", "another-nonce");
-  RecordingBackend otherBackend;
-  auto incoming = wrongToken.receiveRemote(remote("C", 1));
-  wrongToken.publishIfCurrent(*incoming.publication, otherBackend);
-  auto foreignMarker = *otherBackend.lastMarker;
-  foreignMarker.token = "foreign-process";
-  check(
-      wrongToken.observeLocal(otherBackend.generation, foreignMarker, "external", "v1", {"text/plain"}).status ==
-          BrokerStatus::Accepted,
-      "matching generation without our token must not suppress an external observation"
-  );
-
-  ClipboardBroker wrongRevision("mac/process-3", "nonce-three");
-  RecordingBackend thirdBackend;
-  incoming = wrongRevision.receiveRemote(remote("D", 1));
-  wrongRevision.publishIfCurrent(*incoming.publication, thirdBackend);
-  auto oldMarker = *thirdBackend.lastMarker;
-  ++oldMarker.revision;
-  check(
-      wrongRevision.observeLocal(thirdBackend.generation, oldMarker, "external-2", "v1", {"text/plain"}).status ==
-          BrokerStatus::Accepted,
-      "matching token and generation still require the publication revision"
+      actual == expected,
+      message + ": expected " + std::string(statusName(expected)) + ", got " + std::string(statusName(actual))
   );
 }
 
-void originOrderingAndLimits()
+ClipboardBroker::Options options()
 {
-  BrokerLimits limits;
-  limits.maxOrigins = 2;
-  ClipboardBroker broker("mac/process-1", "publication-nonce", limits);
-  check(broker.receiveRemote(remote("A", 20)).status == BrokerStatus::Accepted, "first origin");
-  const auto revision = broker.revision();
-  check(broker.receiveRemote(remote("duplicate", 20)).status == BrokerStatus::Duplicate, "deduplicate origin sequence");
-  check(
-      broker.receiveRemote(remote("old", 19)).status == BrokerStatus::OutOfOrder, "reject reordering from one origin"
-  );
-  check(broker.revision() == revision && broker.current()->offerId == "A", "replays do not alter the selection");
-  check(
-      broker.receiveRemote(remote("B", 1, "ubuntu/process-2")).status == BrokerStatus::Accepted, "new epoch accepted"
-  );
-  check(broker.current()->offerId == "B", "sequences from different origins are not compared");
-  check(
-      broker.receiveRemote(remote("third", 1, "third-device/process-1")).status == BrokerStatus::ResourceLimit,
-      "origin replay tracking is bounded without silent eviction"
-  );
-  check(
-      broker.receiveRemote(remote("A-new", 21)).status == BrokerStatus::Accepted, "existing origin advances at limit"
-  );
-  check(
-      broker.receiveRemote(remote("echo", 300, "mac/process-1")).status == BrokerStatus::LocalOrigin,
-      "suppress relay echo"
-  );
-  auto invalid = remote("invalid", 22);
-  invalid.formats = {""};
-  check(broker.receiveRemote(invalid).status == BrokerStatus::InvalidAnnouncement, "reject invalid format");
-  check(
-      broker.receiveRemote(remote("valid", 22)).status == BrokerStatus::Accepted,
-      "invalid input does not consume sequence"
-  );
-  invalid = remote("too-large", 23);
-  invalid.offerId.assign(65537, 'x');
-  check(broker.receiveRemote(invalid).status == BrokerStatus::InvalidAnnouncement, "metadata bytes are bounded");
-  invalid = remote("too-many-formats", 23);
-  invalid.formats.assign(65, "text/plain");
-  check(broker.receiveRemote(invalid).status == BrokerStatus::InvalidAnnouncement, "format count is bounded");
+  ClipboardBroker::Options value;
+  value.localOriginId = "ubuntu";
+  value.ownerId = "deskflow-x11-owner";
+  return value;
 }
 
-void failureClearAndDisconnect()
+void begin(ClipboardBroker &broker, const std::string &epoch = "epoch-1")
 {
-  ClipboardBroker broker("mac/process-1", "publication-nonce");
-  RecordingBackend backend;
-  const auto a = broker.receiveRemote(remote("A", 1));
-  backend.fail = true;
-  check(
-      broker.publishIfCurrent(*a.publication, backend) == BrokerStatus::BackendFailure, "surface publication failure"
-  );
-  check(!backend.lastOffer, "failed publication is not successful");
-  backend.fail = false;
-  check(
-      broker.publishIfCurrent(*a.publication, backend) == BrokerStatus::Accepted, "current preparation can be retried"
-  );
+  expect(broker.beginSession(epoch, "mac").status, Status::Ok, "begin session");
+}
 
-  const auto b = broker.receiveRemote(remote("B", 2));
-  const auto writes = backend.calls;
-  broker.clear();
-  check(!broker.current(), "clear removes current selection");
-  check(
-      broker.publishIfCurrent(*b.publication, backend) == BrokerStatus::StalePublication, "clear invalidates prepared B"
-  );
-  check(backend.calls == writes, "clear and stale completion do not modify external clipboard");
-  check(
-      broker.receiveRemote(remote("replayed-B", 2)).status == BrokerStatus::Duplicate,
-      "clear preserves replay protection"
-  );
+OfferInfo offer(std::string id, const std::string &epoch = "epoch-1")
+{
+  OfferInfo value;
+  value.sessionEpoch = epoch;
+  value.offerId = std::move(id);
+  value.offerVersion = "manifest-v1";
+  value.immutableVersion = true;
+  value.roots = {"dir"};
+  value.files = {
+      {"dir", "", "directory", "directory", "dir-v1", FileKind::Directory, 0},
+      {"first", "dir", "first.bin", "directory/first.bin", "file-v1", FileKind::File, 4096},
+      {"later", "dir", "later.bin", "directory/later.bin", "file-v1", FileKind::File, 8192},
+  };
+  return value;
+}
 
-  // Clearing the actual platform clipboard is an ordinary local change. It
-  // propagates as an offer with no formats, with its own increasing sequence.
-  const auto empty = broker.observeLocal(backend.generation + 1, std::nullopt, "empty", "v1", {});
-  check(
-      empty.status == BrokerStatus::Accepted && empty.announcement->formats.empty(), "propagate local clipboard clear"
+OfferAnnouncement remote(OfferInfo value, std::uint64_t revision)
+{
+  return {std::move(value), "mac", revision, OfferDirection::Remote};
+}
+
+LeaseResult lease(const std::string &id, const std::string &version = "manifest-v1", std::uint32_t ttl = 30000)
+{
+  return {Status::Ok, id, version, ttl, LeaseState::Active};
+}
+
+std::size_t count(const Result &result, Kind kind)
+{
+  return static_cast<std::size_t>(std::count_if(result.actions.begin(), result.actions.end(), [&](const auto &action) {
+    return action.kind == kind;
+  }));
+}
+
+ClipboardBroker::Action action(const Result &result, Kind kind)
+{
+  check(count(result, kind) == 1, "expected exactly one action of kind " + std::to_string(static_cast<int>(kind)));
+  return *std::find_if(result.actions.begin(), result.actions.end(), [&](const auto &item) {
+    return item.kind == kind;
+  });
+}
+
+ClipboardBroker::Action publish(ClipboardBroker &broker, std::string id, std::uint64_t revision)
+{
+  const auto accepted = broker.receiveRemote(remote(offer(id), revision));
+  expect(accepted.status, Status::Ok, "receive " + id);
+  const auto acquire = action(accepted, Kind::AcquireLease);
+  check(count(accepted, Kind::Publish) == 0, "publication must await successful lease");
+  const auto acquired = broker.completeAcquire("epoch-1", acquire.requestId, lease("lease-" + id));
+  expect(acquired.status, Status::Ok, "acquire " + id);
+  const auto publication = action(acquired, Kind::Publish);
+  check(broker.canPublish(publication.owner.publicationToken), "publication is current");
+  expect(
+      broker.completePublication(publication.owner.publicationToken, Status::Ok).status, Status::Ok, "publish " + id
   );
-  const auto c = broker.receiveRemote(remote("C", 3));
-  broker.disconnect();
-  const auto stoppedRevision = broker.revision();
-  broker.disconnect();
-  check(!broker.connected() && !broker.current(), "disconnect clears and closes broker");
-  check(broker.revision() == stoppedRevision, "disconnect is idempotent");
+  return publication;
+}
+
+void leaseBeforePublication()
+{
+  ClipboardBroker broker(options());
+  begin(broker);
+  const auto received = broker.receiveRemote(remote(offer("A"), 1));
+  expect(received.status, Status::Ok, "receive");
+  check(received.actions.size() == 1 && count(received, Kind::Publish) == 0, "only lease acquisition emitted");
+  check(broker.retainedPublications().empty(), "no file entry published before acquisition");
+  const auto acquire = action(received, Kind::AcquireLease);
+  check(acquire.requestedTtlMs == 30000, "requested lease TTL exposed");
+  const auto completed = broker.completeAcquire("epoch-1", acquire.requestId, lease("lease-A", "manifest-v1", 9000));
+  const auto publication = action(completed, Kind::Publish);
+  check(publication.grantedTtlMs == 9000, "runtime receives actual granted TTL");
+  check(publication.announcement->offer.files.size() == 3, "whole directory manifest retained");
+  check(broker.retainedPublications().front().grantedTtlMs == 9000, "actual TTL in retention record");
+}
+
+void lateAcquisitionCannotReplaceNewerOffer()
+{
+  ClipboardBroker broker(options());
+  begin(broker);
+  const auto requestA = action(broker.receiveRemote(remote(offer("A"), 1)), Kind::AcquireLease);
+  const auto requestB = action(broker.receiveRemote(remote(offer("B"), 2)), Kind::AcquireLease);
+  const auto publishedB =
+      action(broker.completeAcquire("epoch-1", requestB.requestId, lease("lease-B")), Kind::Publish);
+  expect(broker.completePublication(publishedB.owner.publicationToken, Status::Ok).status, Status::Ok, "publish B");
+  const auto lateA = broker.completeAcquire("epoch-1", requestA.requestId, lease("lease-A"));
   check(
-      broker.publishIfCurrent(*c.publication, backend) == BrokerStatus::Disconnected,
-      "disconnect rejects late preparation"
+      lateA.ignored && count(lateA, Kind::Publish) == 0 && count(lateA, Kind::ReleaseLease) == 1,
+      "late lease A released without publication"
+  );
+  check(broker.currentOffer()->offer.offerId == "B", "B remains selected");
+  check(broker.retainedOfferCount() == 1 && broker.pendingAcquireCount() == 0, "superseded pending A removed");
+
+  const auto requestC = action(broker.receiveRemote(remote(offer("C"), 3)), Kind::AcquireLease);
+  broker.observeLocal(offer("local-D"), {"application-owner", {}, {}});
+  const auto lateC = broker.completeAcquire("epoch-1", requestC.requestId, lease("lease-C"));
+  check(
+      lateC.ignored && count(lateC, Kind::Publish) == 0 && count(lateC, Kind::ReleaseLease) == 1,
+      "late remote acquisition cannot cover newer local user copy"
+  );
+  check(broker.currentOffer()->offer.offerId == "local-D", "new local selection preserved");
+}
+
+void delayedBackendPublicationMustRecheckSelection()
+{
+  ClipboardBroker broker(options());
+  begin(broker);
+  const auto requestA = action(broker.receiveRemote(remote(offer("A"), 1)), Kind::AcquireLease);
+  const auto publicationA =
+      action(broker.completeAcquire("epoch-1", requestA.requestId, lease("lease-A")), Kind::Publish);
+  broker.receiveRemote(remote(offer("B"), 2));
+  check(!broker.canPublish(publicationA.owner.publicationToken), "deferred A must not claim the clipboard");
+  const auto cancelled = broker.completePublication(publicationA.owner.publicationToken, Status::Cancelled);
+  expect(cancelled.status, Status::Cancelled, "discard deferred A");
+  check(
+      count(cancelled, Kind::ReleaseLease) == 1 && broker.currentOffer()->offer.offerId == "B",
+      "discarding A leaves B selected"
+  );
+}
+
+void ownerMarkersAndIdenticalUserCopies()
+{
+  ClipboardBroker broker(options());
+  begin(broker);
+  const auto published = publish(broker, "A", 1);
+  const auto echo = broker.observeLocal({}, published.owner);
+  check(echo.ignored && echo.actions.empty(), "self owner, origin and token suppress exact publication echo");
+  auto badMarker = published.owner;
+  badMarker.originId = "other-device";
+  expect(broker.observeLocal({}, badMarker).status, Status::InvalidArgument, "wrong origin is not a valid self event");
+  badMarker = published.owner;
+  badMarker.publicationToken = "unknown-token";
+  expect(broker.observeLocal({}, badMarker).status, Status::InvalidArgument, "unknown self token rejected");
+
+  // An application may preserve the MIME marker when copying the same content.
+  // Its actual clipboard owner changed, so this is still a new user operation.
+  auto user = published.owner;
+  user.ownerId = "files-window-owner";
+  const auto copied = broker.observeLocal(offer("local-A"), user);
+  expect(copied.status, Status::Ok, "application copies identical directory");
+  check(!copied.ignored && action(copied, Kind::Announce).announcement->originId == "ubuntu", "new local origin");
+  const auto copiedAgain = broker.observeLocal(offer("local-B"), user);
+  check(
+      !copiedAgain.ignored && action(copiedAgain, Kind::Announce).announcement->revision == 2,
+      "same owner copies identical content again: no content-hash suppression"
+  );
+  expect(
+      broker.observeLocal(offer("local-B"), user).status, Status::VersionMismatch, "offer identities cannot be reused"
+  );
+  check(broker.retainedPublications().size() == 1, "local copies do not retire old published remote directory");
+}
+
+void oldDirectoryAndRenewalAreRetained()
+{
+  ClipboardBroker broker(options());
+  begin(broker);
+  const auto a = publish(broker, "A", 1);
+  const auto b = publish(broker, "B", 2);
+  const auto retained = broker.retainedPublications();
+  check(retained.size() == 2, "A remains after B replaces clipboard");
+  check(
+      broker.observeLocal({}, a.owner).ignored && broker.currentOffer()->offer.offerId == "B",
+      "late owner notification for retained A cannot replace B"
+  );
+  check(retained.front().announcement->offer.files.back().fileId == "later", "unopened directory descendant retained");
+  const auto renew = broker.renewPublications();
+  check(count(renew, Kind::RenewLease) == 2, "renew every old and current publication, independent of open handles");
+  auto renewed = lease(a.leaseId, "manifest-v1", 12000);
+  expect(broker.completeRenew(a.owner.publicationToken, renewed).status, Status::Ok, "renew A");
+  check(broker.retainedPublications().front().grantedTtlMs == 12000, "renewed TTL exposed");
+  const auto released = broker.releasePublication(a.owner.publicationToken);
+  check(
+      count(released, Kind::RetirePublication) == 1 && action(released, Kind::ReleaseLease).leaseId == a.leaseId,
+      "only explicit release retires A and releases its whole-offer lease"
+  );
+  check(broker.currentOffer()->offer.offerId == "B" && broker.retainedPublications().size() == 1, "B unaffected");
+  expect(
+      broker.completePublication(b.owner.publicationToken, Status::Ok).status, Status::Ok, "publication ack idempotent"
+  );
+}
+
+void sessionRevisionAndDirectionValidation()
+{
+  ClipboardBroker broker(options());
+  expect(broker.receiveRemote(remote(offer("A"), 1)).status, Status::Disconnected, "no active session");
+  begin(broker);
+  expect(
+      broker.receiveRemote(remote(offer("wrong-epoch", "epoch-other"), 1)).status, Status::StaleSession, "wrong epoch"
+  );
+  auto wrong = remote(offer("wrong-origin"), 1);
+  wrong.originId = "ubuntu";
+  expect(broker.receiveRemote(wrong).status, Status::InvalidArgument, "remote cannot claim own origin");
+  wrong.originId = "mac";
+  wrong.direction = OfferDirection::Local;
+  expect(broker.receiveRemote(wrong).status, Status::InvalidArgument, "wrong direction");
+  expect(broker.receiveRemote(remote(offer("zero"), 0)).status, Status::InvalidArgument, "zero revision");
+  expect(broker.receiveRemote(remote(offer("A"), 7)).status, Status::Ok, "first revision need not be one");
+  expect(broker.receiveRemote(remote(offer("replay"), 7)).status, Status::VersionMismatch, "duplicate revision");
+  expect(broker.receiveRemote(remote(offer("older"), 6)).status, Status::VersionMismatch, "out-of-order revision");
+  expect(
+      broker.receiveRemote(remote(offer("A"), 8)).status, Status::VersionMismatch, "offer ID cannot acquire new meaning"
   );
   check(
-      broker.receiveRemote(remote("D", 4)).status == BrokerStatus::Disconnected,
-      "disconnected session cannot accept offers"
+      broker.currentOffer()->offer.offerId == "A" && broker.pendingAcquireCount() == 1, "invalid events have no effect"
+  );
+}
+
+void retainedOfferBudgetDoesNotEvictOldDirectories()
+{
+  auto limited = options();
+  limited.maxRetainedOffers = 1;
+  ClipboardBroker broker(limited);
+  begin(broker);
+  const auto a = publish(broker, "A", 1);
+  const auto rejected = broker.receiveRemote(remote(offer("B"), 2));
+  expect(rejected.status, Status::ResourceLimit, "old publication consumes a real budget slot");
+  check(rejected.actions.empty() && broker.currentOffer()->offer.offerId == "A", "budget failure does not revoke A");
+  broker.releasePublication(a.owner.publicationToken);
+  check(broker.retainedManifestBytes() == 0, "explicit release returns manifest budget");
+  expect(
+      broker.receiveRemote(remote(offer("B"), 2)).status, Status::Ok,
+      "rejected revision can retry after explicit release"
+  );
+}
+
+void pendingAndManifestBudgets()
+{
+  auto limited = options();
+  limited.maxPendingAcquires = 1;
+  ClipboardBroker broker(limited);
+  begin(broker);
+  const auto request = action(broker.receiveRemote(remote(offer("A"), 1)), Kind::AcquireLease);
+  expect(broker.receiveRemote(remote(offer("B"), 2)).status, Status::ResourceLimit, "bounded pending acquisitions");
+  broker.completeAcquire("epoch-1", request.requestId, {Status::Timeout, {}, {}, 0, LeaseState::Closed});
+  check(broker.pendingAcquireCount() == 0 && broker.retainedManifestBytes() == 0, "failed acquire returns budgets");
+
+  ClipboardBroker measured(options());
+  begin(measured);
+  measured.observeLocal(offer("one"), {"application", {}, {}});
+  limited = options();
+  limited.maxManifestBytes = measured.retainedManifestBytes();
+  limited.maxRetainedOffers = 1;
+  ClipboardBroker exact(limited);
+  begin(exact);
+  expect(exact.observeLocal(offer("one"), {"application", {}, {}}).status, Status::Ok, "exact logical manifest budget");
+  expect(
+      exact.observeLocal(offer("two"), {"application", {}, {}}).status, Status::Ok,
+      "replacing local observation reuses its bookkeeping slot"
+  );
+  auto oversized = offer("big");
+  oversized.files.front().relativePath.append(100, 'x');
+  expect(exact.receiveRemote(remote(oversized, 1)).status, Status::ResourceLimit, "manifest byte limit");
+  check(exact.currentOffer()->offer.offerId == "two", "oversized replacement leaves old selection");
+}
+
+void invalidAcquireAndDuplicateLease()
+{
+  ClipboardBroker broker(options());
+  begin(broker);
+  const auto first = action(broker.receiveRemote(remote(offer("A"), 1)), Kind::AcquireLease);
+  const auto wrong = broker.completeAcquire("epoch-1", first.requestId, lease("lease-wrong", "new-version"));
+  expect(wrong.status, Status::InvalidSourceResponse, "wrong manifest version");
+  check(count(wrong, Kind::Publish) == 0 && count(wrong, Kind::ReleaseLease) == 1, "invalid acquired lease released");
+  const auto zero = action(broker.receiveRemote(remote(offer("zero"), 2)), Kind::AcquireLease);
+  expect(
+      broker.completeAcquire("epoch-1", zero.requestId, lease("lease-zero", "manifest-v1", 0)).status,
+      Status::InvalidSourceResponse, "zero granted TTL"
+  );
+  const auto a = publish(broker, "live", 3);
+  const auto collision = action(broker.receiveRemote(remote(offer("collision"), 4)), Kind::AcquireLease);
+  const auto completed = broker.completeAcquire("epoch-1", collision.requestId, lease(a.leaseId));
+  expect(completed.status, Status::InvalidSourceResponse, "colliding lease identity");
+  check(
+      completed.actions.empty() && broker.retainedPublications().size() == 1,
+      "do not release the other publication's colliding lease"
+  );
+  expect(
+      broker.completeAcquire("epoch-1", "unknown", lease("not-ours")).status, Status::InvalidSourceResponse,
+      "uncorrelated response rejected"
+  );
+}
+
+void renewFailureAndPublicationFailure()
+{
+  ClipboardBroker broker(options());
+  begin(broker);
+  const auto a = publish(broker, "A", 1);
+  const auto b = publish(broker, "B", 2);
+  const auto expired =
+      broker.completeRenew(a.owner.publicationToken, {Status::LeaseExpired, {}, {}, 0, LeaseState::Expired});
+  expect(expired.status, Status::LeaseExpired, "expired old lease reported");
+  check(
+      count(expired, Kind::RetirePublication) == 1 && broker.currentOffer()->offer.offerId == "B",
+      "expiry retires old directory without touching current B"
+  );
+  auto invalid = lease("wrong-lease");
+  expect(
+      broker.completeRenew(b.owner.publicationToken, invalid).status, Status::InvalidSourceResponse,
+      "renewal must match lease and version"
+  );
+  check(!broker.currentOffer() && broker.retainedPublications().empty(), "invalid current renewal stops publication");
+  const auto request = action(broker.receiveRemote(remote(offer("C"), 3)), Kind::AcquireLease);
+  const auto publication =
+      action(broker.completeAcquire("epoch-1", request.requestId, lease("lease-C")), Kind::Publish);
+  const auto failed = broker.completePublication(publication.owner.publicationToken, Status::IoError);
+  check(
+      count(failed, Kind::ReleaseLease) == 1 && broker.retainedOfferCount() == 0,
+      "failed platform publication returns lease and metadata budget"
+  );
+}
+
+void sessionCleanupAndNoEpochReuse()
+{
+  ClipboardBroker broker(options());
+  begin(broker);
+  const auto a = publish(broker, "A", 1);
+  publish(broker, "B", 2);
+  const auto pending = action(broker.receiveRemote(remote(offer("C"), 3)), Kind::AcquireLease);
+  const auto closed = broker.closeSession("epoch-1");
+  check(
+      count(closed, Kind::RetirePublication) == 2 && count(closed, Kind::ReleaseLease) == 2 &&
+          count(closed, Kind::CancelAcquire) == 1,
+      "session close retires all old/current publications and cancels pending acquisition"
   );
   check(
-      broker.observeLocal(999, std::nullopt, "late-local", "v1", {"text/plain"}).status == BrokerStatus::Disconnected,
-      "disconnected session does not originate offers"
+      !broker.currentOffer() && broker.retainedOfferCount() == 0 && broker.retainedManifestBytes() == 0,
+      "session close releases all broker records"
   );
-  check(backend.calls == writes, "disconnect performs no platform clipboard writes");
+  check(!broker.canPublish(a.owner.publicationToken), "closed token cannot be published");
+  expect(broker.beginSession("epoch-1", "mac").status, Status::StaleSession, "epoch reuse forbidden");
+  begin(broker, "epoch-2");
+  expect(
+      broker.completeAcquire("epoch-1", pending.requestId, lease("late-C")).status, Status::StaleSession,
+      "late old-session completion cannot affect new session"
+  );
+  expect(broker.receiveRemote(remote(offer("old", "epoch-1"), 9)).status, Status::StaleSession, "old offer rejected");
+  const auto local = broker.observeLocal(offer("fresh", "epoch-2"), {"application", {}, {}});
+  expect(local.status, Status::Ok, "fresh session local offer");
+  check(action(local, Kind::Announce).announcement->revision == 1, "origin revisions restart in new epoch");
+}
+
+void manifestAndReplayBookkeepingLimits()
+{
+  auto bounded = options();
+  bounded.maxAnnouncementsPerSession = 1;
+  bounded.maxSessionEpochs = 1;
+  ClipboardBroker broker(bounded);
+  begin(broker);
+  expect(broker.observeLocal(offer("A"), {"application", {}, {}}).status, Status::Ok, "first announcement");
+  expect(
+      broker.observeLocal(offer("B"), {"application", {}, {}}).status, Status::ResourceLimit,
+      "replay history has explicit bound"
+  );
+  broker.closeSession("epoch-1");
+  expect(broker.beginSession("epoch-2", "mac").status, Status::ResourceLimit, "epoch history bounded");
+
+  ClipboardBroker validator(options());
+  begin(validator);
+  auto invalid = offer("bad-root");
+  invalid.roots.push_back("absent");
+  expect(validator.receiveRemote(remote(invalid, 1)).status, Status::InvalidArgument, "unknown root");
+  invalid = offer("cycle");
+  invalid.files.push_back({"cycle-a", "cycle-b", "a", "a", "v1", FileKind::Directory, 0});
+  invalid.files.push_back({"cycle-b", "cycle-a", "b", "b", "v1", FileKind::Directory, 0});
+  expect(validator.receiveRemote(remote(invalid, 1)).status, Status::InvalidArgument, "disconnected directory cycle");
+  invalid = offer("bad-size");
+  invalid.files.back().size = std::numeric_limits<std::uint64_t>::max();
+  expect(validator.receiveRemote(remote(invalid, 1)).status, Status::UnsupportedSize, "POSIX cannot represent size");
+  invalid = offer("duplicate-name");
+  invalid.files.back().name = invalid.files[1].name;
+  expect(validator.receiveRemote(remote(invalid, 1)).status, Status::InvalidArgument, "ambiguous siblings");
+  check(validator.retainedOfferCount() == 0, "invalid manifest never reaches publication");
 }
 
 } // namespace
 
 int main()
 {
+  const std::vector<std::pair<std::string, std::function<void()>>> tests{
+      {"lease-before-publication", leaseBeforePublication},
+      {"late-acquisition", lateAcquisitionCannotReplaceNewerOffer},
+      {"delayed-platform-publication", delayedBackendPublicationMustRecheckSelection},
+      {"owner-markers-and-identical-user-copies", ownerMarkersAndIdenticalUserCopies},
+      {"old-directory-retention-and-renewal", oldDirectoryAndRenewalAreRetained},
+      {"epoch-revision-direction", sessionRevisionAndDirectionValidation},
+      {"retained-offer-budget", retainedOfferBudgetDoesNotEvictOldDirectories},
+      {"pending-and-manifest-budgets", pendingAndManifestBudgets},
+      {"invalid-acquire-and-lease-collision", invalidAcquireAndDuplicateLease},
+      {"renewal-and-publication-failures", renewFailureAndPublicationFailure},
+      {"session-cleanup", sessionCleanupAndNoEpochReuse},
+      {"manifest-and-replay-limits", manifestAndReplayBookkeepingLimits},
+  };
   try {
-    asyncPublicationOrdering();
-    publicationEchoAndUserCopies();
-    originOrderingAndLimits();
-    failureClearAndDisconnect();
-    std::cout << "clipboard broker tests passed\n";
+    for (const auto &[name, test] : tests) {
+      test();
+      std::cout << "PASS " << name << '\n';
+    }
+    std::cout << tests.size() << " broker tests passed\n";
     return 0;
   } catch (const std::exception &error) {
-    std::cerr << "clipboard broker test failed: " << error.what() << '\n';
+    std::cerr << "FAIL " << error.what() << '\n';
     return 1;
   }
 }
